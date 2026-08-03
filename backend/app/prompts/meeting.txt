@@ -1,0 +1,6 @@
+Viết biên bản/tóm tắt cuộc họp bằng tiếng Việt dựa trên ngữ cảnh. Dùng các mục: Mục tiêu, Nội dung chính, Quyết định, Việc cần làm. Nêu rõ nếu không có thông tin.
+
+Tiêu đề: {title}
+Yêu cầu thêm: {instructions}
+Ngữ cảnh:
+{context}

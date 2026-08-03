@@ -1,0 +1,6 @@
+Viết báo cáo tổng quan nghiên cứu bằng tiếng Việt dựa trên ngữ cảnh. Dùng các mục: Tóm tắt, Phát hiện, Bằng chứng, Hạn chế, Kết luận. Không tạo dữ kiện mới.
+
+Tiêu đề: {title}
+Yêu cầu thêm: {instructions}
+Ngữ cảnh:
+{context}

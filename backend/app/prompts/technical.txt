@@ -1,0 +1,6 @@
+Viết một báo cáo kỹ thuật bằng tiếng Việt dựa hoàn toàn trên ngữ cảnh. Dùng Markdown với các mục: Tóm tắt, Phân tích, Điểm chính, Khuyến nghị. Không suy diễn ngoài dữ liệu.
+
+Tiêu đề: {title}
+Yêu cầu thêm: {instructions}
+Ngữ cảnh:
+{context}
