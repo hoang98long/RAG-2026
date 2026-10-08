@@ -59,7 +59,7 @@ class RetrievalTests(unittest.TestCase):
                  Document(page_content="Điều kiện áp dụng. " * 30, metadata={"page": 1})]
         with patch("app.rag.chunking.get_settings", return_value=settings), \
              patch("app.rag.chunking.PyPDFLoader") as loader:
-            loader.return_value.load.return_value = pages
+            loader.return_value.lazy_load.return_value = pages
             chunks = load_chunks(Path("example.pdf"))
         self.assertEqual({c.metadata["page"] for c in chunks}, {1, 2})
         self.assertTrue(all(len(c.page_content) <= 200 for c in chunks))
@@ -79,9 +79,10 @@ class RetrievalTests(unittest.TestCase):
 
     def test_real_chroma_hybrid_reindex_and_delete(self):
         with tempfile.TemporaryDirectory() as directory:
-            settings = Settings(_env_file=None, chroma_dir=directory, embedding_batch_size=1)
+            settings = Settings(_env_file=None, chroma_dir=directory, embedding_batch_size=1, rerank_backend="off")
             with patch("app.rag.vector_store.get_settings", return_value=settings), \
-                 patch("app.rag.vector_store.OllamaEmbeddings", FakeEmbeddings):
+                 patch("app.rag.vector_store.OllamaEmbeddings", FakeEmbeddings), \
+                 patch("app.rag.reranking.get_settings", return_value=settings):
                 store = VectorStore()
                 self.assertEqual(store.search("test", 6), [])
                 store.add("doc-a", "A.pdf", [Document(page_content="bảo hành 24 tháng", metadata={"page": 2}),

@@ -22,6 +22,10 @@ class SourceChunk(BaseModel):
     chunk_index: int | None = None
     score: float | None = None
     similarity: float | None = None
+    section: str = ""
+    table_header: str = ""
+    rerank_score: float | None = None
+    rerank_method: str | None = None
 
 
 class ReportRequest(BaseModel):

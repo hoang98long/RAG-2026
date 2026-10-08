@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import { Send, FileText, Search, ExternalLink } from 'lucide-react'
-import { askChat, getDocuments } from '../services/api'
+import { askChat, getDocumentPage } from '../services/api'
 import { citationLinks, sourceUrl } from '../utils/sources'
 import type { Source } from '../types'
 
@@ -15,7 +15,9 @@ function SourceLink({ source, index }: { source: Source; index: number }) {
 }
 
 export default function ChatPage() {
-  const { data: docs = [] } = useQuery({ queryKey: ['documents'], queryFn: getDocuments })
+  const [documentOffset, setDocumentOffset] = useState(0)
+  const { data: documentPage } = useQuery({ queryKey: ['documents', 'paged', documentOffset, 50], queryFn: () => getDocumentPage(documentOffset, 50) })
+  const docs = documentPage?.items || []
   const [messages, setMessages] = useState<Message[]>([])
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
@@ -39,7 +41,7 @@ export default function ChatPage() {
     } finally { setLoading(false) }
   }
   return <div className="grid items-start gap-5 xl:h-[calc(100dvh-4rem)] xl:grid-cols-[220px_minmax(0,1fr)_280px]">
-    <aside className="card max-h-48 overflow-auto p-4 xl:max-h-full"><h2 className="mb-3 flex items-center gap-2 font-semibold"><FileText size={17} />Tài liệu ({docs.length})</h2>{docs.length ? docs.map(doc => <a href={`/documents/${encodeURIComponent(doc.id)}`} target="_blank" rel="noopener noreferrer" key={doc.id} className="mb-2 block truncate rounded-lg bg-slate-50 p-2 text-xs text-slate-600 hover:text-blue-700" title={doc.filename}>{doc.filename}</a>) : <p className="text-sm text-slate-500">Chưa có tài liệu.</p>}</aside>
+    <aside className="card max-h-48 overflow-auto p-4 xl:max-h-full"><h2 className="mb-3 flex items-center gap-2 font-semibold"><FileText size={17} />Tài liệu ({documentPage?.total || 0})</h2>{docs.length ? docs.map(doc => <a href={`/documents/${encodeURIComponent(doc.id)}`} target="_blank" rel="noopener noreferrer" key={doc.id} className="mb-2 block truncate rounded-lg bg-slate-50 p-2 text-xs text-slate-600 hover:text-blue-700" title={doc.filename}>{doc.filename}</a>) : <p className="text-sm text-slate-500">Chưa có tài liệu.</p>}{(documentPage?.total || 0) > 50 && <div className="mt-3 flex justify-between text-xs"><button disabled={documentOffset === 0} onClick={() => setDocumentOffset(value => Math.max(0, value - 50))} className="text-blue-700 disabled:text-slate-400">Trước</button><button disabled={documentOffset + 50 >= (documentPage?.total || 0)} onClick={() => setDocumentOffset(value => value + 50)} className="text-blue-700 disabled:text-slate-400">Tiếp</button></div>}</aside>
     <section className="card flex h-[calc(100dvh-14rem)] min-h-[320px] min-w-0 flex-col overflow-hidden md:h-[calc(100dvh-4rem)] xl:h-full xl:min-h-0">
       <header className="shrink-0 border-b p-5"><h1 className="text-xl font-bold">Hỏi đáp với tài liệu</h1><p className="mt-1 text-sm text-slate-500">Câu trả lời được tạo từ các đoạn tài liệu liên quan.</p></header>
       <div ref={scroller} className="min-h-0 flex-1 space-y-5 overflow-auto overscroll-contain p-5">

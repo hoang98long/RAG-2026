@@ -53,7 +53,7 @@ def select_sources(candidates: list[dict], limit: int, budget: int) -> list[dict
         key = " ".join(unicodedata.normalize("NFC", candidate["content"]).casefold().split())
         if key in seen:
             continue
-        cost = len(candidate["content"]) + len(candidate["document"]) + 100
+        cost = len(candidate["content"]) + len(candidate["document"]) + len(candidate.get("section", "")) + len(candidate.get("table_header", "")) + 120
         if used + cost > budget:
             continue
         selected.append({**candidate, "source_id": f"S{len(selected) + 1}"})

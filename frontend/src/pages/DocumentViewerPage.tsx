@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { ExternalLink, FileText } from 'lucide-react'
@@ -13,11 +13,19 @@ export default function DocumentViewerPage() {
   const chunkIndex = chunkValue != null && /^\d+$/.test(chunkValue) ? Number(chunkValue) : null
   const page = pageValue != null && /^[1-9]\d*$/.test(pageValue) ? Number(pageValue) : null
   const target = useRef<HTMLElement>(null)
-  const { data, isPending, error } = useQuery({ queryKey: ['document-content', documentId], queryFn: () => getDocumentContent(documentId), enabled: Boolean(documentId) })
+  const body = useRef<HTMLDivElement>(null)
+  const [offset, setOffset] = useState<number | null>(null)
+  useEffect(() => setOffset(null), [documentId, chunkIndex, page])
+  const { data, isPending, isFetching, error } = useQuery({
+    queryKey: ['document-content', documentId, offset, chunkIndex, page],
+    queryFn: () => getDocumentContent(documentId, { offset: offset ?? 0, limit: 50, ...(offset == null ? { chunk: chunkIndex ?? undefined, page: page ?? undefined } : {}) }),
+    enabled: Boolean(documentId), gcTime: 60000,
+  })
   const targetChunk = data?.chunks.find(chunk => chunk.chunk_index === chunkIndex)
     || (page != null ? data?.chunks.find(chunk => chunk.page === page) : undefined)
   useEffect(() => {
-    if (!data || !target.current) return
+    if (!data) return
+    if (!target.current) { if (body.current) body.current.scrollTop = 0; return }
     const frame = requestAnimationFrame(() => {
       target.current?.scrollIntoView({ block: 'center' })
       target.current?.focus({ preventScroll: true })
@@ -31,9 +39,9 @@ export default function DocumentViewerPage() {
         {data && <a className="btn" href={documentFileUrl(documentId, targetChunk?.page || page)} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} />{data.file_type === 'pdf' ? `Mở PDF gốc${targetChunk?.page ? ` · Trang ${targetChunk.page}` : ''}` : 'Tải bản DOCX gốc'}</a>}
       </div>
       <p className="mt-2 text-sm text-slate-500">Nội dung trích xuất từ tài liệu. Đoạn được dẫn nguồn được tô nổi để đối chiếu.</p>
-      {data && chunkIndex != null && !data.chunks.some(chunk => chunk.chunk_index === chunkIndex) && <p role="alert" className="mt-2 text-sm text-amber-700">Đoạn nguồn không còn trong chỉ mục hiện tại. Tài liệu có thể đã được lập lại chỉ mục.</p>}
+      {data?.target_found === false && <p role="alert" className="mt-2 text-sm text-amber-700">Đoạn nguồn không còn trong chỉ mục hiện tại. Tài liệu có thể đã được lập lại chỉ mục.</p>}
     </header>
-    <div className="min-h-0 flex-1 overflow-auto p-5 md:p-8">
+    <div ref={body} className="min-h-0 flex-1 overflow-auto p-5 md:p-8">
       {isPending && <p role="status" className="text-slate-500">Đang mở tài liệu...</p>}
       {error && <p role="alert" className="text-red-600">{errorText}</p>}
       {data?.chunks.map(chunk => <article key={chunk.chunk_index} ref={chunk.chunk_index === targetChunk?.chunk_index ? target : undefined} tabIndex={-1} className={`mb-5 scroll-mt-6 rounded-xl border p-5 outline-none ${chunk.chunk_index === targetChunk?.chunk_index ? 'border-amber-300 bg-amber-50 ring-2 ring-amber-200' : 'border-slate-100'}`}>
@@ -41,5 +49,10 @@ export default function DocumentViewerPage() {
         <p className="whitespace-pre-wrap break-words text-sm leading-7">{chunk.content}</p>
       </article>)}
     </div>
+    {data && <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t p-4 text-sm">
+      <button className="btn" disabled={isFetching || data.offset === 0} onClick={() => setOffset(Math.max(0, data.offset - data.limit))}>Phần trước</button>
+      <span className="text-slate-500">Đoạn {data.chunks.length ? data.offset + 1 : 0}–{Math.min(data.offset + data.chunks.length, data.total)} / {data.total}</span>
+      <button className="btn" disabled={isFetching || data.offset + data.limit >= data.total} onClick={() => setOffset(data.offset + data.limit)}>Phần tiếp</button>
+    </footer>}
   </section>
 }

@@ -1,0 +1,3 @@
+# Optional: only needed for RERANK_BACKEND=cross_encoder.
+# Downloads PyTorch and the configured Hugging Face model; CPU is the default device.
+sentence-transformers>=3.0,<6

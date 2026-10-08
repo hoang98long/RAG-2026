@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
 import axios from 'axios'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { UploadCloud, FileCheck, X } from 'lucide-react'
-import { uploadDocuments } from '../services/api'
+import { getUploadLimits, uploadDocuments } from '../services/api'
 
 function uploadError(error: unknown): string {
   if (axios.isAxiosError(error)) {
@@ -26,6 +26,7 @@ export default function UploadPage() {
   const [message, setMessage] = useState('')
   const [failed, setFailed] = useState(false)
   const query = useQueryClient()
+  const { data: limits } = useQuery({ queryKey: ['upload-limits'], queryFn: getUploadLimits })
   const add = (list: FileList | null) => {
     if (busy) return
     setMessage('')
@@ -34,24 +35,33 @@ export default function UploadPage() {
   }
   const submit = async () => {
     if (!files.length || busy) return
+    const oversized = limits && files.find(file => file.size > limits.max_file_mb * 1024 * 1024)
+    if (oversized) {
+      setFailed(true)
+      setMessage(`${oversized.name}: vượt giới hạn ${limits!.max_file_mb} MiB mỗi tệp.`)
+      return
+    }
     setBusy(true)
     setMessage('')
     setFailed(false)
     setProgress(0)
+    let uploaded = 0
     try {
-      await uploadDocuments(files, setProgress)
-      setMessage('Tải và lập chỉ mục tài liệu thành công.')
-      setFiles([])
-      query.invalidateQueries({ queryKey: ['documents'] })
-      query.invalidateQueries({ queryKey: ['dashboard'] })
+      await uploadDocuments(files, setProgress, file => {
+        uploaded++
+        setFiles(items => items.filter(item => item !== file))
+        query.invalidateQueries({ queryKey: ['documents'] })
+        query.invalidateQueries({ queryKey: ['dashboard'] })
+      })
+      setMessage(`Đã tải và lập chỉ mục thành công ${uploaded} tài liệu.`)
     } catch (error) {
       setFailed(true)
-      setMessage(uploadError(error))
+      setMessage(`${uploaded ? `Đã lưu ${uploaded} tài liệu. ` : ''}${uploadError(error)} Các tệp chưa hoàn tất vẫn ở danh sách chờ.`)
     } finally { setBusy(false) }
   }
   return <>
     <h1 className="text-3xl font-bold">Tải tài liệu</h1>
-    <p className="mt-2 text-slate-500">Hỗ trợ nhiều tệp PDF và DOCX trong một lần tải. PDF scan cần được OCR trước.</p>
+    <p className="mt-2 text-slate-500">Chọn nhiều PDF/DOCX; các tệp được xử lý lần lượt.{limits && ` Tối đa ${limits.max_file_mb} MiB mỗi tệp.`} PDF scan cần được OCR trước.</p>
     <div onDrop={event => { event.preventDefault(); add(event.dataTransfer.files) }} onDragOver={event => event.preventDefault()} onClick={() => !busy && input.current?.click()} className="card mt-7 cursor-pointer border-2 border-dashed border-blue-200 p-12 text-center hover:border-blue-400">
       <UploadCloud className="mx-auto text-blue-600" size={38} /><p className="mt-4 font-semibold">Kéo thả tài liệu vào đây</p><p className="mt-1 text-sm text-slate-500">hoặc bấm để chọn tệp · PDF, DOCX</p>
       <input ref={input} onChange={event => add(event.target.files)} disabled={busy} className="hidden" type="file" multiple accept=".pdf,.docx" />
@@ -59,8 +69,8 @@ export default function UploadPage() {
     {files.length > 0 && <div className="card mt-5 p-5">
       <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Tệp chờ tải ({files.length})</h2><button disabled={busy} className="text-sm text-slate-500" onClick={() => setFiles([])}>Xóa tất cả</button></div>
       {files.map((file, index) => <div className="flex items-center justify-between border-t py-3 text-sm" key={file.name + index}><span className="flex items-center gap-2"><FileCheck size={17} className="text-blue-600" />{file.name}</span><button disabled={busy} aria-label={`Bỏ ${file.name}`} onClick={() => setFiles(items => items.filter((_, i) => i !== index))}><X size={17} /></button></div>)}
-      {busy && <div className="mt-3"><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} /></div>{progress === 100 && <p className="mt-2 text-sm text-slate-500">Đã gửi tệp. Đang đọc nội dung và tạo chỉ mục...</p>}</div>}
-      <button disabled={busy} onClick={submit} className="btn mt-5">{busy ? (progress === 100 ? 'Đang xử lý tài liệu...' : `Đang tải ${progress}%`) : 'Tải lên và xử lý'}</button>
+      {busy && <div className="mt-3"><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} /></div><p className="mt-2 text-sm text-slate-500">Đang gửi tệp và lập chỉ mục lần lượt...</p></div>}
+      <button disabled={busy} onClick={submit} className="btn mt-5">{busy ? `Đang tải và xử lý ${progress}%` : 'Tải lên và xử lý'}</button>
     </div>}
     {message && <p role={failed ? 'alert' : 'status'} className={`mt-4 text-sm ${failed ? 'text-red-600' : 'text-blue-700'}`}>{message}</p>}
   </>

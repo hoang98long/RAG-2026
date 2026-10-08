@@ -57,18 +57,20 @@ class UploadTests(unittest.TestCase):
     def test_success_uses_embedding_without_chat_llm(self):
         chunks = [Document(page_content='Nội dung tài liệu', metadata={'page': 1})]
         with patch('app.services.document_service.get_settings', return_value=self.settings), \
-             patch('app.services.document_service.load_chunks', return_value=chunks), \
+             patch('app.services.document_service.iter_chunks', return_value=chunks), \
              patch('app.services.document_service.get_vector_store') as store, \
              patch('app.services.rag_service._llm') as llm:
+            store.return_value.add.side_effect = lambda document_id, filename, stream: len(list(stream))
             records = upload_files([UploadFile(filename='document.pdf', file=io.BytesIO(b'pdf'))], self.db)
-            store.return_value.add.assert_called_once_with(records[0].id, 'document.pdf', chunks)
+            store.return_value.add.assert_called_once()
+            self.assertEqual(store.return_value.add.call_args.args[:2], (records[0].id, 'document.pdf'))
             llm.assert_not_called()
         self.db.commit.assert_called_once()
         self.assertTrue(Path(records[0].filepath).is_file())
 
     def test_partial_embedding_failure_cleans_uploaded_file_and_vectors(self):
         with patch('app.services.document_service.get_settings', return_value=self.settings), \
-             patch('app.services.document_service.load_chunks', return_value=[Document(page_content='Text')]), \
+             patch('app.services.document_service.iter_chunks', return_value=[Document(page_content='Text')]), \
              patch('app.services.document_service.get_vector_store') as store:
             store.return_value.add.side_effect = RuntimeError('embedding failed')
             with self.assertRaises(RuntimeError):

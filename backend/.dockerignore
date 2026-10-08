@@ -1,0 +1,26 @@
+# Build the application image without machine-specific runtime data.
+.git
+.idea
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+__pycache__/
+*.py[codz]
+*.db
+**/*.db
+*.db-*
+**/*.db-*
+*.sqlite
+**/*.sqlite
+*.sqlite-*
+**/*.sqlite-*
+*.sqlite3
+**/*.sqlite3
+*.sqlite3-*
+**/*.sqlite3-*
+chroma_data/
+storage/
+logs/
+data/

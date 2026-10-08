@@ -218,3 +218,23 @@ __marimo__/
 .streamlit/secrets.toml
 /backend/.idea
 /frontend/node_modules
+
+# Runtime data belongs to each deployment, never to source control.
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+/chroma_data/
+/storage/
+/logs/
+/data/
+/backend/chroma_data/
+/backend/storage/
+/backend/logs/
+/backend/data/
+
+# Machine-specific environment files (keep configuration templates).
+.env.*
+!.env.example

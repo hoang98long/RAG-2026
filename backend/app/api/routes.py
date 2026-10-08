@@ -2,7 +2,7 @@ from pathlib import Path
 from fastapi.responses import FileResponse
 from app.rag.vector_store import get_vector_store
 from app.core.config import get_settings
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -72,10 +72,29 @@ def document_file(document_id: str, db: Session = Depends(get_db)):
     return FileResponse(path, media_type=media_type, filename=document.filename, content_disposition_type="inline")
 
 
-@router.get("/documents/{document_id}/content")
-def document_content(document_id: str, db: Session = Depends(get_db)):
+@router.get('/documents/{document_id}/content')
+def document_content(document_id: str, db: Session = Depends(get_db),
+                     offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
+                     chunk: int | None = Query(None, ge=0), page: int | None = Query(None, ge=1)):
     document, path = _document_file(document_id, db)
-    chunks = get_vector_store().document_chunks(document_id)
-    if not chunks:
-        raise HTTPException(404, "Tài liệu chưa có nội dung trong chỉ mục hiện tại. Hãy lập lại chỉ mục theo README.")
-    return ok({"id": document.id, "filename": document.filename, "file_type": path.suffix.lower()[1:], "chunks": chunks})
+    result = get_vector_store().document_page(document_id, offset=offset, limit=limit, chunk_index=chunk, page=page)
+    if not result['total']:
+        raise HTTPException(404, 'Tài liệu chưa có nội dung trong chỉ mục hiện tại. Hãy lập lại chỉ mục theo README.')
+    return ok({'id': document.id, 'filename': document.filename, 'file_type': path.suffix.lower()[1:], **result})
+
+
+@router.get('/documents/upload-limits')
+def upload_limits():
+    settings = get_settings()
+    return ok({'max_file_mb': settings.upload_max_file_mb, 'max_request_mb': settings.upload_max_request_mb,
+               'max_files': settings.upload_max_files})
+
+
+@router.get('/documents/paged')
+def document_catalogue(db: Session = Depends(get_db), offset: int = Query(0, ge=0),
+                       limit: int = Query(50, ge=1, le=200)):
+    total = db.scalar(select(func.count()).select_from(Document)) or 0
+    records = db.scalars(select(Document).order_by(Document.upload_time.desc(), Document.id)
+                         .offset(offset).limit(limit)).all()
+    return ok({'items': [DocumentOut.model_validate(item).model_dump(mode="json") for item in records],
+               'total': total, 'offset': offset, 'limit': limit})

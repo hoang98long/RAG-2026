@@ -48,12 +48,23 @@ class DocumentViewTests(unittest.TestCase):
         chunks = [{'content': 'Source passage', 'chunk_index': 4, 'page': 3}]
         with patch('app.api.routes.get_settings', return_value=self.settings), \
              patch('app.api.routes.get_vector_store') as store:
-            store.return_value.document_chunks.return_value = chunks
+            store.return_value.document_page.return_value = {'chunks': chunks, 'total': 5, 'offset': 0, 'limit': 50, 'target_found': None}
             response = self.client.get('/documents/source/content')
-            store.return_value.document_chunks.assert_called_once_with('source')
+            store.return_value.document_page.assert_called_once_with('source', offset=0, limit=50, chunk_index=None, page=None)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['data']['chunks'], chunks)
         self.assertEqual(response.json()['data']['file_type'], 'pdf')
+
+    def test_catalogue_is_paginated_and_rejects_unbounded_page_size(self):
+        self.db.scalar.return_value = 127
+        self.db.scalars.return_value.all.return_value = []
+        response = self.client.get('/documents/paged?offset=100&limit=50')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['data'], {'items': [], 'total': 127, 'offset': 100, 'limit': 50})
+        statement = self.db.scalars.call_args.args[0]
+        self.assertEqual(statement._limit_clause.value, 50)
+        self.assertEqual(statement._offset_clause.value, 100)
+        self.assertEqual(self.client.get('/documents/paged?limit=201').status_code, 422)
 
     def test_deleted_document_returns_404(self):
         self.db.get.return_value = None
@@ -70,7 +81,7 @@ class DocumentViewTests(unittest.TestCase):
     def test_missing_index_returns_404(self):
         with patch('app.api.routes.get_settings', return_value=self.settings), \
              patch('app.api.routes.get_vector_store') as store:
-            store.return_value.document_chunks.return_value = []
+            store.return_value.document_page.return_value = {'chunks': [], 'total': 0}
             self.assertEqual(self.client.get('/documents/source/content').status_code, 404)
 
 
