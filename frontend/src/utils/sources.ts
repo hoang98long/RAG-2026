@@ -37,3 +37,18 @@ export function citationLinks(sources: Source[]) {
     visit(tree)
   }
 }
+
+// Hide internal citation markers in prose, including grouped citations.
+// Keep literal examples in code and existing Markdown links unchanged.
+export function hideCitationMarkers() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (['link', 'linkReference', 'code', 'inlineCode'].includes(node.type)) return
+      if (node.type === 'text' && node.value) {
+        node.value = node.value.replace(/[ \t]*\[\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\]/gi, '')
+      }
+      node.children?.forEach(visit)
+    }
+    visit(tree)
+  }
+}

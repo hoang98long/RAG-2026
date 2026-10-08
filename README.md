@@ -184,3 +184,5 @@ Danh sách tài liệu trong trang quản lý và cột chat phân trang 50 tệ
 ## Lưu trữ riêng trên từng máy triển khai
 
 Database, Chroma/FTS, tài liệu upload và `.env` riêng được ignore; Docker build cũng không đóng gói dữ liệu máy phát triển. Giữ nguyên đường dẫn và volume trên máy đã ingest. **Lần pull đầu commit bỏ theo dõi dữ liệu cần sao lưu/khôi phục trước khi chạy lại backend**, vì Git có thể xóa các tệp cũ đang tracked. Xem [hướng dẫn cập nhật giữ dữ liệu](docs/STORAGE_DEPLOYMENT.md).
+
+Giao diện chat ẩn mã trích dẫn nội bộ `[S1]`, `[S1, S2]` trong phần trả lời. Nguồn tham chiếu vẫn hiển thị tên tệp, trang/đoạn và link mở đúng vị trí; backend vẫn giữ mã để kiểm tra trích dẫn.
