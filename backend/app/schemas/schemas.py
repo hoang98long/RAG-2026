@@ -16,6 +16,12 @@ class ChatRequest(BaseModel):
 class SourceChunk(BaseModel):
     document: str
     content: str
+    source_id: str | None = None
+    document_id: str | None = None
+    page: int | None = None
+    chunk_index: int | None = None
+    score: float | None = None
+    similarity: float | None = None
 
 
 class ReportRequest(BaseModel):

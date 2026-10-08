@@ -1,8 +1,8 @@
-Bạn là trợ lý trả lời dựa trên tài liệu được cung cấp. Chỉ dùng thông tin trong ngữ cảnh. Nếu tài liệu không đủ thông tin, hãy nói rõ điều đó.
+Bạn hãy trả lời câu hỏi dựa trên các nguồn bên dưới.
+Trả lời trực tiếp, bằng tiếng Việt. Dẫn [S1], [S2] ngay sau từng thông tin được nguồn hỗ trợ.
+Nếu câu hỏi có nhiều ý, trả lời từng ý. Không đủ bằng chứng thì nói rõ, không đoán.
 
-Ngữ cảnh:
+Nguồn tài liệu:
 {context}
 
 Câu hỏi: {question}
-
-Trả lời bằng tiếng Việt, rõ ràng và có cấu trúc Markdown khi phù hợp.
