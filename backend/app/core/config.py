@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     database_url: str = "sqlite:///./rag.db"
     ollama_base_url: str = "http://localhost:11434"
-    llm_model: str = "llama3.1:70b"
+    llm_model: str = "qwen2.5:7b"
     embedding_model: str = "qwen3-embedding:0.6b"
     chroma_dir: str = "./chroma_data"
     upload_dir: str = "./storage/uploads"

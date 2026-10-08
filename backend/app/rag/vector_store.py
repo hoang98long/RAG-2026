@@ -82,6 +82,13 @@ class VectorStore:
                                    "similarity": similarities.get(identifier)})
             return select_sources(candidates, limit, self.settings.max_context_chars)
 
+    def document_chunks(self, document_id: str) -> list[dict]:
+        with self._lock:
+            result = self.collection.get(where={"document_id": document_id}, include=["documents", "metadatas"])
+            chunks = [{"content": text, "chunk_index": meta["chunk_index"], "page": meta.get("page")}
+                      for text, meta in zip(result["documents"], result["metadatas"])]
+            return sorted(chunks, key=lambda chunk: chunk["chunk_index"])
+
     def delete_document(self, document_id: str) -> None:
         with self._lock:
             for collection in self.client.list_collections():

@@ -7,3 +7,6 @@ export const uploadDocuments = (files: File[], onProgress: (n:number) => void) =
 export const deleteDocument = (id: string) => api.delete(`/documents/${id}`)
 export const askChat = (question: string) => api.post<ApiResponse<{answer:string;sources:Source[]}>>('/chat', { question }).then(r => r.data.data)
 export const createReport = (data: {template:string;title:string;instructions:string}) => api.post<ApiResponse<{content:string;sources:Source[]}>>('/report', data).then(r => r.data.data)
+
+export const getDocumentContent = (id: string) => api.get<ApiResponse<import('../types').DocumentContent>>(`/documents/${encodeURIComponent(id)}/content`).then(r => r.data.data)
+export const documentFileUrl = (id: string, page?: number | null) => `${api.defaults.baseURL?.replace(/\/$/, '')}/documents/${encodeURIComponent(id)}/file${page != null ? `#page=${page}` : ''}`

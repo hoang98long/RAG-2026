@@ -42,8 +42,12 @@ def fuse_rankings(*rankings: list[str]) -> list[tuple[str, float]]:
 def select_sources(candidates: list[dict], limit: int, budget: int) -> list[dict]:
     selected: list[dict] = []
     seen: set[str] = set()
+    per_document: Counter[str] = Counter()
     used = 0
     for candidate in candidates:
+        document_id = candidate.get("document_id") or candidate["document"]
+        if per_document[document_id] >= 2:
+            continue
         # Exact normalized duplicates only: don't erase nearly identical clauses
         # that differ in a crucial number, negation or effective date.
         key = " ".join(unicodedata.normalize("NFC", candidate["content"]).casefold().split())
@@ -54,6 +58,7 @@ def select_sources(candidates: list[dict], limit: int, budget: int) -> list[dict
             continue
         selected.append({**candidate, "source_id": f"S{len(selected) + 1}"})
         seen.add(key)
+        per_document[document_id] += 1
         used += cost
         if len(selected) >= limit:
             break

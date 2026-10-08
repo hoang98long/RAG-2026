@@ -70,7 +70,7 @@ class RetrievalTests(unittest.TestCase):
         settings = Settings(_env_file=None)
         with patch("app.services.rag_service.get_settings", return_value=settings):
             llm = _llm()
-        self.assertEqual(llm.model, "llama3.1:70b")
+        self.assertEqual(llm.model, "qwen2.5:7b")
         self.assertEqual(llm.num_ctx, 16384)
         self.assertEqual(llm.temperature, 0)
         text = _context([{"source_id": "S1", "document": "A.pdf", "page": 2,
@@ -87,6 +87,8 @@ class RetrievalTests(unittest.TestCase):
                 store.add("doc-a", "A.pdf", [Document(page_content="bảo hành 24 tháng", metadata={"page": 2}),
                                              Document(page_content="Mã thiết bị AB987")])
                 store.add("doc-b", "B.docx", [Document(page_content="Mã thiết bị XY123")])
+                self.assertEqual([chunk["chunk_index"] for chunk in store.document_chunks("doc-a")], [0, 1])
+                self.assertEqual(store.document_chunks("missing"), [])
                 sources = store.search("AB987", 6)
                 self.assertEqual(sources[0]["content"], "Mã thiết bị AB987")
                 self.assertTrue(FakeEmbeddings.queries[-1].startswith("Instruct:"))

@@ -1,11 +1,11 @@
 # DocuMind RAG
 
-Ứng dụng RAG chạy cục bộ: tải PDF/DOCX, hỏi đáp và tạo báo cáo bằng tiếng Việt. React gọi FastAPI; Ollama chạy `llama3.1:70b` để sinh câu trả lời và một model riêng để embedding.
+Ứng dụng RAG chạy cục bộ: tải PDF/DOCX, hỏi đáp và tạo báo cáo bằng tiếng Việt. React gọi FastAPI; Ollama chạy `qwen2.5:7b` để sinh câu trả lời và một model riêng để embedding.
 
 ## Chạy cục bộ
 
 ```powershell
-ollama pull llama3.1:70b
+ollama pull qwen2.5:7b
 ollama pull qwen3-embedding:0.6b
 cd backend
 Copy-Item .env.example .env
@@ -34,7 +34,7 @@ Frontend: `http://localhost:5173`; Swagger: `http://localhost:8000/docs`. Backen
 ```bash
 # Sao chép .env.example ở thư mục gốc thành .env nếu muốn tùy chỉnh.
 docker compose up -d --build
-docker compose exec ollama ollama pull llama3.1:70b
+docker compose exec ollama ollama pull qwen2.5:7b
 docker compose exec ollama ollama pull qwen3-embedding:0.6b
 # Chỉ cần nếu đã có tài liệu/chỉ mục cũ; dừng API trong lúc lập lại chỉ mục.
 docker compose stop backend
@@ -58,7 +58,7 @@ Model lớn không bù được nguồn bị trích sai hoặc truy xuất thi�
 
 | Biến | Mặc định | Ý nghĩa |
 | --- | --- | --- |
-| `LLM_MODEL` | `llama3.1:70b` | Model sinh câu trả lời |
+| `LLM_MODEL` | `qwen2.5:7b` | Model sinh câu trả lời |
 | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Model tạo vector, độc lập với LLM |
 | `CHUNK_SIZE` | `1600` | Số ký tự Unicode tối đa mỗi đoạn, **không phải token** |
 | `CHUNK_OVERLAP` | `240` | Overlap mục tiêu; phụ thuộc ranh giới đoạn, không chạy qua trang PDF |
@@ -134,3 +134,21 @@ API nghiệp vụ trả `{ success, message, data }`. Mỗi source có `source_i
 - Upload không có chữ: kiểm tra PDF scan/OCR; chỉ nhận `.pdf`, `.docx`.
 - Câu trả lời bị cắt: xem LLM_NUM_PREDICT và ngân sách token còn lại.
 - Nguồn sai: kiểm tra nội dung trích xuất và retrieval trước khi chỉnh prompt hoặc tăng model.
+
+### Xử lý lỗi upload 400 và đổi model
+
+Giao diện upload hiển thị nguyên nhân `detail` từ backend; `backend/logs/api.log` ghi lại lý do từ chối. PDF không trích được chữ có thể là bản scan/ảnh hoặc có lớp chữ lỗi. Cần OCR để tạo PDF có thể tìm kiếm văn bản rồi tải lại. Đổi model sinh câu trả lời không xử lý được bước này.
+
+`.env.example` chỉ là tệp mẫu. Khi chạy từ thư mục `backend`, đặt `LLM_MODEL=qwen2.5:7b` trong `backend/.env` hoặc biến môi trường rồi khởi động lại backend. Upload sử dụng `EMBEDDING_MODEL`, không gọi `LLM_MODEL`.
+
+### Mở nguồn trực tiếp từ chat
+
+Khung hỏi đáp giữ bố cục hiện tại; nội dung tin nhắn cuộn trong khung và ô nhập luôn ở cuối. Các trích dẫn `[S1]`, `[S2]` cùng danh sách nguồn dưới từng câu trả lời và cột nguồn đều mở trang `/documents/{id}?chunk={index}&page={page}` ở tab mới.
+
+Trang đọc hiển thị các đoạn đã lập chỉ mục theo thứ tự tài liệu, tự cuộn đến và tô nổi đoạn được dẫn. Đây là bản văn bản trích xuất, không giữ bố cục gốc; các đoạn có thể lặp phần overlap. Nút mở PDF gốc dùng `#page=` để đến trang chứa nguồn trong trình đọc PDF của trình duyệt. DOCX có nút tải bản gốc, định vị chính xác đoạn thực hiện trong bản văn bản trích xuất.
+
+API bổ sung: `GET /documents/{id}/content` trả các đoạn đã lập chỉ mục; `GET /documents/{id}/file` trả tệp nguồn. Tài liệu không tồn tại, tệp bị xóa hoặc không có chỉ mục sẽ trả 404. Nginx trong Docker có SPA fallback để mở liên kết ở tab mới.
+
+Kiểm tra liên kết trích dẫn ở frontend: `cd frontend` rồi `node --test tests/sources.test.mjs`.
+
+Nguồn truy xuất được giới hạn tối đa **2 đoạn cho mỗi tài liệu**, chọn theo thứ hạng truy xuất sau khi loại nội dung trùng và kiểm tra ngân sách ngữ cảnh. Giới hạn áp dụng cho nguồn gửi mô hình và hiển thị trong chat/báo cáo. `TOP_K` vẫn giới hạn tổng số nguồn của một lần truy xuất. Thay đổi này không cần lập lại chỉ mục; chỉ cần khởi động lại backend.
