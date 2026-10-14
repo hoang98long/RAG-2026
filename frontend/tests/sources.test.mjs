@@ -63,3 +63,12 @@ test('hiding citations preserves code, links and ordinary brackets', () => {
   hideCitationMarkers()(tree)
   assert.deepEqual(tree, original)
 })
+
+test('public source link carries corpus, index version and exact content fingerprint', () => {
+  const url = sourceUrl({ document_id: 'shared', chunk_index: 5, page: 63, scope: 'public', index_version: 'documents_v5_test', digest: '0123456789abcdef' })
+  const params = new URL(url, 'http://localhost').searchParams
+  assert.equal(params.get('scope'), 'public')
+  assert.equal(params.get('version'), 'documents_v5_test')
+  assert.equal(params.get('digest'), '0123456789abcdef')
+  assert.equal(params.get('chunk'), '5')
+})

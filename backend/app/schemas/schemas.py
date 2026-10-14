@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from typing import Literal
+from pydantic import BaseModel, Field, field_validator
 
 
 class DocumentOut(BaseModel):
@@ -10,10 +11,23 @@ class DocumentOut(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    question: str = Field(min_length=1)
+    question: str = Field(min_length=1, max_length=12000)
+    model: Literal['qwen2.5:7b', 'llama3.1:70b', 'openai'] = 'qwen2.5:7b'
+    scope: Literal['private', 'public', 'all'] = 'private'
+
+    @field_validator('question')
+    @classmethod
+    def trim_question(cls, value):
+        if not value.strip():
+            raise ValueError('Question must contain text')
+        return value.strip()
+
 
 
 class SourceChunk(BaseModel):
+    scope: Literal['private', 'public'] | None = None
+    index_version: str | None = None
+    digest: str | None = None
     document: str
     content: str
     source_id: str | None = None

@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from app.core.config import get_settings
 from app.rag.vector_store import get_vector_store
+from app.rag.evidence import retrieve_evidence
+from app.services.rag_service import _llm
 
 
 def expected_sources(case: dict) -> list[dict]:
@@ -49,6 +51,9 @@ def retrieval_metrics(sources: list[dict], labels: list[dict]) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('dataset', type=Path)
+    parser.add_argument('--expanded', action='store_true', help='Evaluate full chat evidence including query planning and section expansion; does not generate an answer')
+    parser.add_argument('--model', choices=['qwen2.5:7b', 'llama3.1:70b'], default='qwen2.5:7b')
+    parser.add_argument('--scope', choices=['private', 'public'], default='private')
     parser.add_argument('--hybrid-only', action='store_true', help='Disable reranking for an ablation run')
     parser.add_argument('--output', type=Path, help='Write all case results and configuration as JSON')
     args = parser.parse_args()
@@ -59,15 +64,21 @@ def main() -> None:
         labels = [expected_sources(case) for case in cases]
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
-    store = get_vector_store()
+    store = get_vector_store() if args.scope == "private" else get_vector_store("public")
     settings = get_settings()
     results = []
     for case, expected in zip(cases, labels):
         start = time.perf_counter()
-        sources = store.search(case['question'], settings.top_k, use_rerank=not args.hybrid_only)
+        coverage = None
+        if args.expanded:
+            result = retrieve_evidence(case['question'], [store], _llm(args.model, args.scope), args.model,
+                                       use_rerank=not args.hybrid_only)
+            sources, coverage = result.evidence, result.coverage
+        else:
+            sources = store.search(case['question'], settings.top_k, use_rerank=not args.hybrid_only)
         elapsed = time.perf_counter() - start
         result = {'question': case['question'], 'expected_sources': expected,
-                  'sources': sources, 'seconds': elapsed, **retrieval_metrics(sources, expected)}
+                  'sources': sources, 'coverage': coverage, 'seconds': elapsed, **retrieval_metrics(sources, expected)}
         results.append(result)
         print(json.dumps({key: value for key, value in result.items() if key != 'sources'}, ensure_ascii=False))
     positive = [result for result in results if result['recall'] is not None]
@@ -85,7 +96,9 @@ def main() -> None:
                     'rerank_model', 'rerank_candidates', 'rerank_min_grade', 'rerank_batch_size', 'llm_num_ctx',
                     'embedding_query_instruction', 'cross_encoder_model', 'cross_encoder_device',
                     'cross_encoder_max_length', 'cross_encoder_min_score')}
-    configuration.update({'collection': store.collection.name, 'hybrid_only': args.hybrid_only, 'max_sources_per_document': 2})
+    configuration.update({'scope': args.scope, 'expanded': args.expanded, 'selected_model': args.model if args.expanded else settings.llm_model,
+                          'evaluation_target': 'full_evidence' if args.expanded else 'baseline_sources',
+                          'collection': store.collection.name, 'hybrid_only': args.hybrid_only, 'max_sources_per_document': None if args.expanded else 2})
     report = {'configuration': configuration, 'summary': summary, 'results': results}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

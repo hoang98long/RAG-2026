@@ -1,188 +1,183 @@
 # DocuMind RAG
 
-Ứng dụng hỏi đáp và tạo báo cáo từ PDF/DOCX bằng tiếng Việt. React gọi FastAPI; Ollama chạy `qwen2.5:7b` để trả lời, `qwen3-embedding:0.6b` để embedding. SQLite lưu nghiệp vụ; Chroma nhúng lưu vector.
+Hỏi đáp và tạo báo cáo từ PDF/DOCX bằng tiếng Việt. FastAPI + React, SQLite lưu metadata/lịch sử, Chroma nhúng lưu vector và SQLite FTS5 lưu chỉ mục từ khóa. Mặc định chat bằng `qwen2.5:7b`; có thêm `llama3.1:70b` và OpenAI API.
 
-## Kiến trúc truy xuất
+## Hai kho tài liệu độc lập
+
+Upload chọn **Nội bộ** hoặc **Public**. Mỗi kho có DB metadata, tệp gốc, vector và lexical index riêng. Dữ liệu đã ingest từ trước giữ nguyên là nội bộ; không tự copy hay chuyển vào public.
+
+| Mô hình | Kho được chọn | Gửi bằng chứng qua OpenAI |
+| --- | --- | --- |
+| `qwen2.5:7b`, `llama3.1:70b` | Nội bộ, public hoặc cả hai | Không |
+| OpenAI (`OPENAI_MODEL`) | Chỉ public | Chỉ nội dung public |
+
+Backend chặn OpenAI với `scope=private/all` trước retrieval; không fallback về dữ liệu nội bộ. `OPENAI_API_KEY=` để trống trong mẫu, chỉ điền tại `.env` backend khi muốn bật. Giao diện chỉ biết trạng thái cấu hình, không nhận key. **Embedding của cả hai kho vẫn chạy qua Ollama**: ingest public không cần key, local đọc vector public không gọi OpenAI. Phân hệ tách dữ liệu/LLM, chưa tách runtime embedding khỏi Ollama.
+
+Chi tiết cách triển khai, ranh giới bảo mật và giới hạn: [PUBLIC_PRIVATE_RAG.md](docs/PUBLIC_PRIVATE_RAG.md).
+
+## Pipeline chat v5
 
 ```text
-PDF/DOCX → trích trang/mục/bảng → chia đoạn theo ranh giới cấu trúc
-         → tên tệp + tiêu đề mục + tiêu đề cột có trong nguồn
-         → contextual embedding + contextual BM25
-Câu hỏi  → vector + BM25 → RRF → reranking → tối đa 2 đoạn/tài liệu
-         → TOP_K + ngân sách ngữ cảnh → sinh câu trả lời → kiểm tra mã trích dẫn
+PDF/DOCX → trích trang/mục/phụ lục/bảng → chia đoạn theo cấu trúc
+         → thêm tên tệp/tiêu đề có trong nguồn → embedding Ollama + FTS5
+Câu hỏi  → câu gốc + diễn đạt lại/tách điều kiện → dense + lexical → RRF
+         → truy vấn bổ sung từ nguồn → rerank → đoạn lân cận/mục/phụ lục
+         → giới hạn ngữ cảnh → trả lời → kiểm tra mã + đối chiếu bằng chứng
 ```
 
-- PDF giữ trang từ 1, nhận diện tiêu đề Điều/Chương/Mục/Phần và các tiêu đề Article/Chapter/Section có số. DOCX đọc thân tài liệu theo thứ tự đoạn văn/bảng, giữ các ô cùng hàng và lặp tiêu đề cột khi hàng được đánh dấu header trong tệp. Không đoán hàng đầu tiên là tiêu đề.
-- Chunk không cắt xuyên qua trang hoặc mục đã nhận diện. Kích thước và overlap tính bằng **ký tự Unicode**, không phải token; overlap là mục tiêu và chỉ áp dụng trong cùng khối.
-- Tên tệp, tiêu đề mục và tiêu đề cột nguồn được thêm vào văn bản dùng cho cả embedding/BM25. Chroma vẫn lưu nguyên đoạn nguồn để hiển thị và dẫn chứng. Đây là bổ sung ngữ cảnh theo metadata, **không phải** bản triển khai đầy đủ Contextual Retrieval sinh ngữ cảnh bằng LLM.
-- RRF hợp nhất hai nhánh. Reranker đánh giá lại ứng viên trước khi chọn nguồn. Mặc định dùng Ollama hiện có, không tải model khác; có lựa chọn cross-encoder BGE riêng.
-- Tối đa **2 đoạn cho mỗi tài liệu** theo thứ hạng sau reranking, rồi giới hạn tổng `TOP_K` và ngân sách ký tự. Không phải hai đoạn đầu theo thứ tự trong tệp.
-- Generation yêu cầu dẫn `[S1]`, `[S2]`, giữ số liệu/điều kiện và nêu mâu thuẫn. Code kiểm tra mã trích dẫn; cho sửa một lần nếu thiếu/sai mã, rồi từ chối nếu vẫn lỗi. Bộ kiểm tra này **chưa kiểm chứng ngữ nghĩa** từng kết luận và chưa bảo đảm mọi kết luận đều có bằng chứng.
+- Nhận diện Điều/Chương/Mục/Phần/Phụ lục và heading tiếng Anh có số/Roman. Chunks giữ trang PDF từ 1, chỉ số đoạn từ 0; DOCX giữ hàng bảng và header được đánh dấu. Không tự đoán số hiệu văn bản hay phụ lục dựa trên kiến thức ngoài nguồn.
+- Chunk và overlap tính bằng **ký tự Unicode**, không phải token. Không cắt xuyên trang hoặc khối mục; PDF vẫn có thể bị trích sai khi là scan, bảng/hai cột.
+- Planner giữ câu gốc, tối đa 3 truy vấn diễn đạt lại và 2 truy vấn bổ sung. Planner lỗi giữ retrieval gốc. Có thể nối bằng chứng của nhiều tài liệu trong kho được phép.
+- Bổ sung đoạn lân cận; câu hỏi danh sách/toàn bộ mở rộng mục của nguồn và theo tham chiếu phụ lục trong cùng tệp qua các trang. “Phụ lục I/01” có khóa chuẩn hóa chung. Mục con có thể vẫn làm tách phạm vi phụ lục; không bảo đảm parser nhận diện mọi cấu trúc.
+- **Hai nguồn/tài liệu là giới hạn hiển thị trong chat**, không chặn lượng bằng chứng dùng trả lời. Link ưu tiên các đoạn thực sự được câu trả lời dẫn. Với danh sách dài, chúng là các link đại diện, không hiển thị toàn bộ bằng chứng. API retrieval baseline và chức năng báo cáo cũ vẫn dùng TOP_K/2 đoạn.
+- Kiểm tra mã nguồn, thêm reviewer đối chiếu kết luận với đoạn được dẫn; sửa tối đa một lần, từ chối trả lời nếu vẫn sai hoặc không kiểm chứng được. Reviewer vẫn có thể sai; chưa thay cho đánh giá thủ công.
+- Khi chưa đọc hết phạm vi/ngữ cảnh bị cắt, `coverage` và giao diện báo kết quả có thể thiếu. Không trình bày đầu ra bị model cắt như một danh sách hoàn chỉnh.
+- Mã `[S1]`, `[S1, S2]` được ẩn trong câu trả lời hiển thị. Nguồn vẫn có tên tệp/trang/đoạn và link mở đúng phần. Link chứa kho, version và hash nội dung; trả 409 nếu đã reindex/đổi đoạn, tránh mở nhầm nguồn cũ. PDF gốc mở qua `#page=`; đây là thứ tự trang trong tệp, không phải số trang in trên giấy.
 
-Cơ sở nghiên cứu, lựa chọn mô hình và giới hạn: [docs/RAG_ACCURACY.md](docs/RAG_ACCURACY.md). Chưa có benchmark câu hỏi thực tế của người dùng; không quy đổi các kiểm thử phần mềm thành tỷ lệ cải thiện độ chính xác.
+Những cải thiện này dựa trên các vấn đề trong `note.docx`. Chưa có benchmark trên bộ tài liệu/câu hỏi thực tế của người dùng, nên chưa có tỷ lệ cải thiện accuracy. Nghiên cứu nền: [RAG_ACCURACY.md](docs/RAG_ACCURACY.md).
 
 ## Chạy cục bộ
+
+Tại thư mục backend, giữ `.env` đã có; chỉ tạo mẫu cho máy mới:
 
 ```powershell
 ollama pull qwen2.5:7b
 ollama pull qwen3-embedding:0.6b
+# Chỉ cần khi chọn Llama, máy phải có đủ RAM/VRAM:
+ollama pull llama3.1:70b
 cd backend
-Copy-Item .env.example .env
+if (-not (Test-Path -LiteralPath '.env')) { Copy-Item .env.example .env }
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-# Sau nâng cấp pipeline này hoặc khi đổi embedding/chunking:
-python -m app.reindex
+# Sau khi backup, dừng API và chuyển dữ liệu cũ sang pipeline v5:
+python -m app.reindex --scope private
+# Chỉ khi kho public đã có tài liệu cần chuyển pipeline:
+python -m app.reindex --scope public
 uvicorn app.main:app --reload
 ```
 
-Nếu đã có `.env`, cập nhật các biến thay vì ghi đè cấu hình riêng. Nếu dùng môi trường hiện có, thay `.venv` bằng `venv`. Lệnh backend chạy tại thư mục `backend` để SQLite/Chroma/upload có đường dẫn đúng. `.env.example` chỉ là mẫu, không được ứng dụng tự đọc.
+Nếu dùng môi trường có sẵn, thay `.venv` bằng `venv`. Chạy backend tại thư mục `backend` để đường dẫn tương đối đúng. `.env.example` chỉ là mẫu, ứng dụng đọc `.env`. Điền key và khởi động lại backend để bật OpenAI; không đặt key vào biến `VITE_*`.
 
-Trong terminal khác: `cd frontend`, `npm install`, `npm run dev`. Frontend: `http://localhost:5173`; Swagger: `http://localhost:8000/docs`.
+Terminal frontend: `cd frontend`, `npm install`, `npm run dev`. Frontend `http://localhost:5173`; Swagger `http://localhost:8000/docs`.
 
 ## Docker
 
 ```bash
-# Có thể sao chép .env.example gốc thành .env để cấu hình Compose.
 docker compose up -d --build
 docker compose exec ollama ollama pull qwen2.5:7b
 docker compose exec ollama ollama pull qwen3-embedding:0.6b
 docker compose stop backend
-docker compose run --rm backend python -m app.reindex
+docker compose run --rm backend python -m app.reindex --scope private
 docker compose up -d backend
 ```
 
-Mở `http://localhost:3000`. Compose chưa cấu hình GPU passthrough. Backend dùng Chroma nhúng, không gọi dịch vụ Chroma riêng trong Compose. Nginx có SPA fallback để mở link nguồn ở tab mới. Cross-encoder không nằm trong image mặc định; nếu bật cần thêm `requirements-reranker.txt` vào bước cài dependency của image. Có thể đặt ngưỡng cross-encoder bằng environment override trong Compose, sau khi đã đo/calibrate.
+Giao diện `http://localhost:3000`. Compose giữ volume private cũ, thêm `public_chroma_data`; DB/upload public ở `/app/storage/public` trong volume `uploads`. Key/cấu hình Compose dùng `.env` gốc. Không đổi project/volume và không dùng `docker compose down -v` khi cập nhật. Chưa cấu hình GPU passthrough. Backend dùng Chroma nhúng, không gọi dịch vụ Chroma riêng trong Compose. Cross-encoder không nằm trong image mặc định, nếu bật cần cài dependency của nó.
 
-## Cấu hình
+## Cấu hình chính
+
+Giữ nguyên `DATABASE_URL`, `CHROMA_DIR`, `UPLOAD_DIR` trên máy đã ingest. Các đường dẫn mặc định bên dưới tính từ thư mục backend; settings từ chối đường dẫn private/public chồng nhau.
 
 | Biến | Mặc định | Ý nghĩa |
 | --- | --- | --- |
-| `LLM_MODEL` | `qwen2.5:7b` | Model sinh câu trả lời |
-| `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Embedding, độc lập với LLM |
+| `DATABASE_URL` | `sqlite:///./rag.db` | DB nội bộ hiện có |
+| `CHROMA_DIR`, `UPLOAD_DIR` | `./chroma_data`, `./storage/uploads` | Index và tệp nội bộ |
+| `PUBLIC_DATABASE_URL` | `sqlite:///./storage/public/public.db` | DB public riêng |
+| `PUBLIC_CHROMA_DIR`, `PUBLIC_UPLOAD_DIR` | `./public_chroma_data`, `./storage/public/uploads` | Index và tệp public |
+| `OPENAI_API_KEY` | trống | Chỉ backend đọc key |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Model cho lựa chọn OpenAI |
+| `OPENAI_TIMEOUT` | `90` | Timeout giây mỗi request API |
+| `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Embedding qua Ollama cho hai kho riêng |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | `1600`, `240` | Ký tự Unicode |
-| `TOP_K` | `6` | Tổng số đoạn nguồn tối đa; mỗi tài liệu tối đa 2 |
-| `RETRIEVAL_CANDIDATES` | `48` | Ứng viên mỗi nhánh vector/BM25 |
-| `MIN_SIMILARITY` | `0.0` | Ngưỡng cosine riêng cho vector; BM25 vẫn có thể giữ nguồn |
-| `MAX_CONTEXT_CHARS` | `14000` | Ngân sách ký tự nguồn và nhãn |
-| `LLM_NUM_CTX`, `LLM_NUM_PREDICT` | `16384`, `2048` | Token ngữ cảnh/đầu ra Ollama |
-| `EMBEDDING_BATCH_SIZE` | `32` | Batch embedding |
-| `RERANK_BACKEND` | `ollama` | `off`, `ollama`, `cross_encoder` |
-| `RERANK_MODEL` | rỗng | Ollama dùng LLM_MODEL khi để rỗng |
-| `RERANK_CANDIDATES` | `32` | Số ứng viên RRF đầu tiên được chấm lại |
-| `RERANK_BATCH_SIZE` | `6` | Batch chấm điểm |
-| `RERANK_MIN_GRADE` | `2` | Ollama: giữ bằng chứng một phần/trực tiếp; thang 0–3 |
-| `RERANK_TIMEOUT` | `120` | Timeout giây của client Ollama cho từng batch; nhiều batch làm tổng thời gian dài hơn |
-| `CROSS_ENCODER_MODEL` | `BAAI/bge-reranker-v2-m3` | Model chuyên chấm cặp query/passage |
-| `CROSS_ENCODER_DEVICE` | `cpu` | Có thể đổi sang `cuda` khi PyTorch/GPU hỗ trợ |
-| `CROSS_ENCODER_MAX_LENGTH` | `1024` | Token tối đa mỗi cặp, đoạn dài có thể bị cắt |
-| `CROSS_ENCODER_MIN_SCORE` | không đặt | Chỉ đặt sau khi calibrate trên bộ câu hỏi có nhãn |
-| `CITATION_REPAIR` | `true` | Sửa một lần nếu mã trích dẫn thiếu/không hợp lệ |
+| `TOP_K` | `6` | Baseline và số lượng anchor trong chat mở rộng |
+| `RETRIEVAL_CANDIDATES` | `48` | Ứng viên mỗi nhánh/truy vấn |
+| `RERANK_BACKEND` | `ollama` | `off`, `ollama`, `cross_encoder`; OpenAI dùng public grader khi bật rerank |
+| `RERANK_CANDIDATES`, `RERANK_BATCH_SIZE` | `32`, `6` | Phạm vi/batch rerank |
+| `RERANK_MIN_GRADE`, `RERANK_TIMEOUT` | `2`, `120` | Grade 0–3; timeout mỗi batch Ollama |
+| `QUERY_EXPANSION`, `GROUNDING_VERIFICATION` | `true`, `true` | Diễn đạt lại/truy xuất bổ sung và reviewer |
+| `NEIGHBOR_CHUNKS` | `1` | Số đoạn lân cận mỗi phía |
+| `MAX_CONTEXT_CHARS` | `14000` | Ngân sách bằng chứng câu hỏi thường |
+| `EXHAUSTIVE_CONTEXT_CHARS`, `EVIDENCE_MAX_CHUNKS` | `32000`, `80` | Ngân sách cho danh sách dài |
+| `LLM_NUM_CTX`, `LLM_NUM_PREDICT` | `16384`, `2048` | Cửa sổ Ollama và đầu ra thường |
+| `EXHAUSTIVE_NUM_PREDICT` | `4096` | Đầu ra cho câu hỏi danh sách |
+| `EMBEDDING_BATCH_SIZE`, `INDEX_PAGE_SIZE` | `32`, `500` | Batch embedding và phục hồi lexical |
+| `UPLOAD_MAX_FILE_MB`, `UPLOAD_MAX_REQUEST_MB`, `UPLOAD_MAX_FILES` | `200`, `512`, `20` | MiB/tệp, MiB/request, tệp/request API |
 
-Grade Ollama: 0 không liên quan, 1 chỉ cùng chủ đề, 2 bằng chứng một phần, 3 trực tiếp. Không phải xác suất đúng; không dùng chung ngưỡng với score của cross-encoder. Nếu reranker lỗi/timeout hoặc trả ID không hợp lệ, code log cảnh báo và dùng lại thứ hạng hybrid, kèm `rerank_method=hybrid_fallback`. Trong trạng thái này không có bộ lọc grade, nên vẫn có thể trả nguồn không đủ liên quan.
+Điểm cosine/BM25/RRF/grade không phải xác suất trả lời đúng. Reranker lỗi giữ thứ hạng hybrid và báo `hybrid_fallback`; reviewer lỗi không xuất câu trả lời. Mỗi bước tăng thời gian xử lý/chi phí; so sánh bằng bộ câu hỏi có nhãn trước khi thay ngưỡng. Ngân sách ký tự không đo chính xác token.
 
-`temperature=0`; ngân sách ký tự chỉ gần đúng với token. Cửa sổ lớn hơn dùng thêm bộ nhớ; tham khảo [Ollama context length](https://docs.ollama.com/context-length). Các biến kết nối/đường dẫn trong `.env.example`: `DATABASE_URL`, `OLLAMA_BASE_URL`, `CHROMA_DIR`, `UPLOAD_DIR`, `CORS_ORIGINS`, `EMBEDDING_QUERY_INSTRUCTION`.
+BGE tùy chọn: cài `pip install -r requirements-reranker.txt`, đặt `RERANK_BACKEND=cross_encoder`, `CROSS_ENCODER_MODEL=BAAI/bge-reranker-v2-m3`, device `cpu` hoặc `cuda`. Ngưỡng `CROSS_ENCODER_MIN_SCORE` chỉ đặt sau khi hiệu chỉnh trên dữ liệu có nhãn. Đổi embedding sang bản lớn hơn chỉ khi đủ tài nguyên và đã đo, cần reindex.
 
-Để thử BGE khi đủ tài nguyên:
+## Lưu trữ, cập nhật và reindex
 
-```powershell
-cd backend
-pip install -r requirements-reranker.txt
-# Trong backend/.env: RERANK_BACKEND=cross_encoder
-# Khởi động lại backend; lần đầu tải model từ Hugging Face.
-```
+Database, SQLite WAL/SHM/journal, Chroma/FTS, upload, log và `.env` riêng được Git ignore. Docker build cũng loại dữ liệu máy phát triển. **Lần pull đầu tiên commit bỏ tracking dữ liệu cần sao lưu/khôi phục**, vì Git có thể xóa tệp cũ đang tracked: [STORAGE_DEPLOYMENT.md](docs/STORAGE_DEPLOYMENT.md).
 
-Chưa cài dependency/model BGE tự động. Model và PyTorch chiếm thêm bộ nhớ/dung lượng. Nếu cần tốc độ trước, đặt `RERANK_BACKEND=off` để so sánh với hybrid baseline.
+Pipeline hiện tại tạo collection `documents_v5_*`; tên phụ thuộc model/instruction/chunking. Giữ collection cũ và tệp đã upload, không tự chuyển dữ liệu. Reindex từng kho trên chính máy triển khai khi nâng cấp v4 → v5 hoặc đổi embedding/chunking/instruction. Đổi LLM/reranker không cần reindex.
 
-## Lập lại chỉ mục
+Dừng API và mọi process ghi, backup toàn bộ DB/index/upload, chạy `python -m app.reindex --scope private` hoặc `public`, rồi khởi động lại. Không phải giao dịch nguyên tử toàn corpus; nếu lỗi, giữ API dừng, khắc phục rồi chạy lại. `--lexical-only` chỉ dựng FTS từ vector hiện tại, không chuyển pipeline cũ. Không dùng nhiều process cùng ghi Chroma nhúng. Xóa tài liệu dọn các collection của riêng kho được chọn, không xóa kho còn lại.
 
-Dừng API, chạy `python -m app.reindex` tại thư mục backend. Pipeline này dùng collection `documents_v4_*`; collection v2/cũ và tệp upload được giữ nguyên. Tên collection phụ thuộc phiên bản pipeline, model embedding, instruction và chunking. **Cần reindex sau nâng cấp này**, thay embedding/instruction/chunking; thay reranker/LLM/TOP_K không cần reindex.
+PDF đọc từng trang, DOCX theo đoạn/hàng XML, embedding theo batch. FTS5 trên đĩa không tải toàn corpus vào RAM khi query. Reader và danh sách tải 50 mục/lần, API tối đa 200. Giao diện gửi từng tệp tuần tự; tệp đã thành công giữ lại nếu tệp sau lỗi. Upload API vẫn đồng bộ tới khi embedding xong, chưa có queue bền vững/resume. Parser PDF và vector index vẫn có thể dùng nhiều RAM; sức chứa phụ thuộc phần cứng, không có benchmark số lượng tối đa. Nginx giới hạn 512 MiB; tăng upload cần chỉnh proxy tương ứng.
 
-Reindex đọc DB và tệp đã upload, upsert từng batch; không phải giao dịch nguyên tử toàn corpus. Nếu lỗi, giữ API dừng, khắc phục và chạy lại rồi mới mở API. Không dùng nhiều process cùng ghi/reindex. BM25 hiện dùng SQLite FTS5 trên đĩa; truy vấn chỉ đọc văn bản của tập ứng viên. API xóa tài liệu dọn cả collection cũ/v2/v3/v4 để đổi cấu hình không khôi phục nguồn đã xóa.
+## API
 
-## Đo độ chính xác và so sánh phương pháp
-
-Tạo 30–50 câu hỏi thực tế có bằng chứng chuẩn, gồm mã, số liệu, câu diễn đạt lại, so sánh và câu không có đáp án. Dành tập kiểm tra độc lập, tránh chọn tham số dựa vào chính tập này.
-
-JSONL hỗ trợ nhãn tệp như phiên bản cũ hoặc nhãn trang/đoạn:
-
-```json
-{"question":"Thời hạn bảo hành của AB987?", "expected_sources":[{"document":"bao-hanh.pdf", "page":3, "chunk_index":4}]}
-{"question":"Điều kiện loại trừ là gì?", "expected_documents":["bao-hanh.pdf"]}
-{"question":"Tài liệu không có câu trả lời cho câu này", "expected_sources":[]}
-```
-
-`document_id` có thể thay hoặc bổ sung `document`, giúp phân biệt hai upload trùng tên. Trang từ 1, chunk_index từ 0. Có thể bỏ chunk_index để chỉ đánh giá đúng trang. Sau đổi chunking/reindex phải rà lại nhãn chunk_index. Danh sách rỗng là câu không có nguồn phù hợp.
-
-```powershell
-cd backend
-python -m app.evaluate path/to/questions.jsonl --hybrid-only --output evaluation/hybrid.json
-python -m app.evaluate path/to/questions.jsonl --output evaluation/reranked.json
-python -m unittest discover -s tests -v
-```
-
-Công cụ báo recall, precision trên các nguồn trả về, MRR, khả năng không trả nguồn ở câu không có đáp án, thời gian trung bình/p95 và số ca fallback. File JSON lưu cấu hình, nhãn và nguồn để kiểm tra lỗi. **Chỉ đo retrieval**, không gọi model sinh câu trả lời, không đo hallucination hoặc chất lượng câu trả lời. Chạy warm-up trước nếu muốn loại ảnh hưởng tải model; lưu cùng dataset cho cả hai cấu hình.
-
-## Giới hạn và thử nghiệm tiếp theo
-
-- PDF scan cần OCR bên ngoài. Parser PDF văn bản chưa giữ quan hệ bảng/hai cột; parser DOCX mới xử lý thân tài liệu, chưa đầy đủ header/footer, chú thích, bảng lồng và lịch sử sửa đổi.
-- Nhận diện mục PDF dựa quy tắc, có thể bỏ sót tiêu đề hoặc nhận diện nhầm; không tự suy ra ngày hiệu lực/phiên bản.
-- Chat vẫn hỏi từng câu độc lập; chưa giải quyết câu hỏi nối tiếp bằng lịch sử. Báo cáo chỉ truy xuất theo tiêu đề/yêu cầu, chưa kiểm tra độ phủ toàn corpus.
-- Giới hạn 2 đoạn/tài liệu có thể thiếu bằng chứng cho câu hỏi nhiều điều kiện nằm rải rác; cần đo trước khi thêm parent-child retrieval/đoạn lân cận.
-- Thử `qwen3-embedding:4b` nếu đủ RAM/VRAM, reindex và đo với cùng tập câu hỏi. Chưa đổi mặc định vì chưa có dữ liệu phần cứng hoặc benchmark chứng minh bản lớn phù hợp hơn.
-- Bước kiểm tra mã trích dẫn không xác nhận nội dung trích dẫn đúng. Cần thêm đánh giá thủ công hoặc kiểm chứng kết luận/bằng chứng cho các trường hợp quan trọng.
-
-## API và giao diện
-
-API nghiệp vụ trả `{ success, message, data }`.
+API nghiệp vụ trả `{ success, message, data }`. Endpoint tài liệu nhận query `scope=private|public`, mặc định private.
 
 | Method | Endpoint | Chức năng |
 | --- | --- | --- |
-| POST | `/documents/upload` | PDF/DOCX, nhiều tệp qua `files` |
-| GET | `/documents/paged` | Danh sách phân trang (`offset`, `limit`) |
-| GET | `/documents/upload-limits` | Giới hạn tải lên hiện tại |
-| GET | `/documents` | Danh sách |
-| DELETE | `/documents/{id}` | Xóa tài liệu |
+| POST | `/documents/upload` | PDF/DOCX, multipart `files` |
+| GET | `/documents/paged` | Danh sách theo kho, `offset`, `limit` |
+| GET | `/documents` | Danh sách cũ, giữ tương thích |
+| GET | `/documents/upload-limits` | Giới hạn upload |
+| DELETE | `/documents/{id}` | Xóa trong kho được chọn |
 | GET | `/documents/{id}/file` | Mở/tải bản gốc |
-| GET | `/documents/{id}/content` | Đoạn đã lập chỉ mục theo thứ tự |
-| POST | `/chat` | `{ "question": "..." }` |
-| POST | `/report` | Mẫu `technical`, `meeting`, `research` |
-| GET | `/dashboard` | Thống kê |
+| GET | `/documents/{id}/content` | `offset`, `limit`, `chunk`, `page`, `version`, `digest` |
+| GET | `/chat/models` | Lựa chọn model và trạng thái key, không trả key |
+| POST | `/chat` | `question`, `model`, `scope` (`private`, `public`, `all`) |
+| POST | `/report` | Mẫu `technical`, `meeting`, `research`, hiện dùng nội bộ |
+| GET | `/dashboard` | Thống kê theo kho |
 
-Source có mã `source_id`, tên/ID tài liệu, trang, chỉ số đoạn, nội dung, section/table_header và điểm truy xuất/rerank khi có. Không coi điểm là xác suất trả lời đúng.
+```json
+{"question":"Điều kiện áp dụng?", "model":"qwen2.5:7b", "scope":"all"}
+{"question":"Nội dung tài liệu public?", "model":"openai", "scope":"public"}
+```
 
-Khung chat cuộn nội dung, giữ ô nhập ở cuối. Trích dẫn và nguồn mở tab mới, cuộn/tô nổi đoạn trong bản văn bản trích xuất. PDF gốc mở qua `#page=`; DOCX có nút tải bản gốc. Bản trích xuất không giữ bố cục gốc và có thể lặp overlap. Kiểm thử liên kết: tại frontend chạy `node --test tests/sources.test.mjs`.
+Chat trả `answer`, `sources`, `model`, `scope`, `coverage`. Đổi mô hình/kho bắt đầu cuộc trao đổi mới. Chat vẫn hỏi từng câu độc lập; chưa tự dùng lịch sử để giải quyết câu nối tiếp. Báo cáo cũ chưa có pipeline truy xuất mở rộng hay độ phủ toàn corpus.
+
+## Kiểm thử và đo độ chính xác
+
+```powershell
+cd backend
+python -m unittest discover -s tests -v
+python -m app.evaluate questions.jsonl --scope private --hybrid-only --output evaluation/hybrid.json
+python -m app.evaluate questions.jsonl --scope public --output evaluation/public.json
+# Planner + section expansion, do full evidence retrieval with a local model:
+python -m app.evaluate questions.jsonl --expanded --model qwen2.5:7b --scope private --output evaluation/expanded.json
+cd ../frontend
+node --test tests/sources.test.mjs
+npm run build
+```
+
+Dataset JSONL dùng `expected_documents` hoặc `expected_sources` theo tên/ID tệp và trang/đoạn; nhãn rỗng dành cho câu không có đáp án. Ví dụ:
+
+```json
+{"question":"Nội dung mục được hỏi?", "expected_sources":[{"document":"tai-lieu.pdf", "page":3, "chunk_index":4}]}
+{"question":"Không có đáp án trong kho", "expected_sources":[]}
+```
+
+CLI mặc định đo **baseline retrieval**; `--expanded` đo toàn bộ bằng chứng của pipeline chat, bao gồm planner/mở rộng mục. Cả hai chế độ chưa đánh giá chất lượng câu trả lời. Báo recall, precision nguồn trả về, MRR, abstention, latency và fallback. Cần đánh giá thêm đáp án thực tế với từng mục/bằng chứng chuẩn, gồm câu hỏi diễn đạt lại, nhiều tài liệu, danh sách đầy đủ và đúng vị trí nguồn. Không quy đổi kiểm thử phần mềm thành accuracy. Kiểm thử mới dùng dữ liệu tổng hợp và API mock, chưa đo model/API thật với tài liệu của bạn.
 
 ## Sự cố thường gặp
 
-- Upload 400: giao diện hiện `detail`, log `backend/logs/api.log` ghi nguyên nhân. PDF scan/lớp chữ lỗi cần OCR; PDF khóa/hỏng cần xuất lại bản đọc được. Upload dùng embedding, không gọi LLM.
-- Không có nguồn sau nâng cấp: reindex v4 và kiểm tra đúng DB/Chroma/upload.
-- Không kết nối Ollama: khởi động dịch vụ, pull cả LLM/embedding; xem `OLLAMA_BASE_URL`.
-- Reranking chậm: giảm batch/ứng viên, so sánh `off` hoặc thử cross-encoder. Đổi model không thể được coi là cải thiện nếu chưa đo.
-- Nguồn bị lọc hết: kiểm tra nhãn bằng chứng/grade và dataset trước khi hạ ngưỡng; đừng coi mọi đoạn cùng chủ đề là bằng chứng.
+- Upload 400: xem `detail`; PDF scan cần OCR, tệp hỏng/khóa cần xuất lại bản đọc được.
+- Không có nguồn sau nâng cấp: kiểm tra đúng kho/đường dẫn và reindex v5; không ingest lại trước khi kiểm tra dữ liệu hiện có.
+- OpenAI 403: chỉ chọn kho public. 503: chưa có key; 502: kiểm tra key/quyền model/hạn mức/kết nối.
+- Link nguồn 409: chỉ mục/đoạn đã đổi, hỏi lại để có link mới.
+- Reranking/planner/reviewer chậm: đo từng bước, giảm ứng viên hoặc tắt từng chức năng để so sánh; có đánh đổi độ chính xác.
+- Chat từ chối trả lời do không kiểm chứng được: kiểm tra nguồn, phạm vi ngữ cảnh và khả năng trả JSON của model; không tự hạ kiểm chứng để coi kết luận không được hỗ trợ là đúng.
 
-## Nâng cấp cho nhiều tài liệu và tệp lớn
+Cơ chế OpenAI dựa trên [Responses API](https://developers.openai.com/api/reference/python/resources/responses/methods/create) với `store=False`, không tools và không history phía server. Điều này không đồng nghĩa Zero Data Retention. Câu hỏi và bằng chứng public vẫn được gửi qua API khi người dùng chọn OpenAI.
 
-- Mặc định **200 MiB/tệp**, **512 MiB/yêu cầu multipart**, **20 tệp/yêu cầu API**. Giao diện có thể chọn nhiều tệp hơn và gửi từng tệp lần lượt, nên không gom toàn bộ danh sách vào một request lớn. Tệp đã thành công được bỏ khỏi danh sách chờ; nếu tệp sau lỗi, các tệp đã lưu được giữ lại.
-- Các giới hạn cấu hình trong `.env`: `UPLOAD_MAX_FILE_MB`, `UPLOAD_MAX_REQUEST_MB`, `UPLOAD_MAX_FILES`. `GET /documents/upload-limits` cung cấp giới hạn cho giao diện. Middleware chặn tổng raw body cả khi không có Content-Length; service kiểm tra dung lượng từng tệp khi sao chép theo khối 1 MiB.
-- PDF đọc/trích văn bản từng trang; DOCX đọc XML từng đoạn/hàng, giải phóng các phần đã xử lý và chia các khối văn bản dài theo cửa sổ. Embedding chỉ giữ một batch. Bộ phân tích PDF vẫn có thể dùng nhiều RAM cho cấu trúc/tài nguyên của một tệp; đây không phải bảo đảm bộ nhớ hằng số cho mọi PDF.
-- BM25 chuyển từ danh sách Python trong RAM sang **SQLite FTS5**, có index document/chunk và trigger giữ dữ liệu tìm kiếm đồng bộ. Dữ liệu nằm trong `CHROMA_DIR/lexical/`; cần sao lưu thư mục này cùng Chroma. Unicode giữ dấu tiếng Việt. Thứ hạng FTS5 có thể khác BM25 cũ, cần chạy lại evaluation.
-- `INDEX_PAGE_SIZE=500` giới hạn số chunk mỗi lần đọc khi phục hồi chỉ mục từ khóa. Dấu dirty và kiểm tra số lượng phát hiện thao tác ghi bị gián đoạn; lần truy xuất tiếp theo có thể dựng lại FTS theo từng trang. Có thể dựng trước bằng `python -m app.reindex --lexical-only`, không gọi Ollama.
-- Reader tải **50 đoạn/lần**, API tối đa 200; link nguồn tự tải phần chứa chunk/trang mục tiêu. Có nút phần trước/tiếp, không tạo DOM cho toàn tài liệu. API content nhận `offset`, `limit`, `chunk`, `page` và trả thêm `total`, `offset`, `limit`, `target_found`.
-- Tăng phạm vi tìm kiếm lên **48 ứng viên mỗi nhánh**, chấm lại **32 ứng viên RRF** để giảm nguy cơ bỏ sót khi corpus lớn. Vẫn tối đa 2 đoạn/tài liệu, TOP_K=6 và ngân sách ngữ cảnh cũ. Reranking nhiều hơn tốn thêm thời gian; đánh giá recall/precision/độ trễ trước khi tăng tiếp.
+## Rà soát tính ổn định
 
-**Cần reindex vào v4** vì cửa sổ trích xuất DOCX và phương pháp lexical đã thay đổi. Chỉ mục cũ và tệp upload được giữ nguyên. Dừng backend, cập nhật `.env` rồi chạy tại backend: `python -m app.reindex`, sau đó khởi động lại API. `--lexical-only` không thay cho reindex toàn bộ khi chuyển v3 → v4.
+Truy xuất giữ câu hỏi gốc làm trọng tâm; reviewer kiểm tra trích đoạn nguyên văn cho từng mã nguồn được dẫn. Upload giữ trạng thái khi chuyển trang và có mã chống ingest trùng khi retry; chat/report ngăn gửi lặp, các lỗi thao tác được hiển thị rõ. Thêm `LLM_TIMEOUT=180`, `EMBEDDING_TIMEOUT=120`, `REVIEW_BATCH_SIZE=6`. Không cần reindex nếu đã dùng v5 và không đổi chunking/embedding. Chi tiết, đánh đổi và giới hạn: [PUBLIC_PRIVATE_RAG.md](docs/PUBLIC_PRIVATE_RAG.md).
 
-Nginx có `client_max_body_size 512m` và thời gian chờ nhận body 300 giây. Nếu tăng giới hạn request, cần chỉnh Nginx/reverse proxy tương ứng. API upload vẫn xử lý đồng bộ tới khi embedding xong; giao diện chờ kết quả và gửi tuần tự, chưa có hàng đợi công việc bền vững hay resume upload sau khi đóng trình duyệt. Trong một request API nhiều tệp, lỗi làm rollback cả request; các request đã hoàn tất trước đó không bị rollback.
-
-Không đặt trần tổng số tài liệu trong ứng dụng. Sức chứa thực tế phụ thuộc ổ đĩa, RAM của index vector Chroma và tài nguyên Ollama; chưa có benchmark chứng minh số lượng tối đa hoặc độ chính xác trên corpus lớn thực tế. Tiếp tục dùng một process ghi chỉ mục, dừng API khi reindex. FTS5 giảm tải văn bản trong RAM, không làm index vector hay embedding trở thành không giới hạn tài nguyên. Khi cần nhiều tiến trình ghi hoặc nhiều người upload đồng thời, cần hàng đợi worker và dịch vụ vector riêng.
-
-Cơ chế tìm kiếm toàn văn và BM25 trên đĩa dựa theo [SQLite FTS5](https://www.sqlite.org/fts5.html). Kiểm thử mở rộng dùng dữ liệu tổng hợp và embedding giả để xác minh batch, phân trang, tính nhất quán; không dùng kết quả đó thay cho benchmark độ chính xác với model thật.
-
-Danh sách tài liệu trong trang quản lý và cột chat phân trang 50 tệp, qua API `GET /documents/paged?offset=0&limit=50` (tối đa 200). API `/documents` cũ vẫn giữ để tương thích.
-
-## Lưu trữ riêng trên từng máy triển khai
-
-Database, Chroma/FTS, tài liệu upload và `.env` riêng được ignore; Docker build cũng không đóng gói dữ liệu máy phát triển. Giữ nguyên đường dẫn và volume trên máy đã ingest. **Lần pull đầu commit bỏ theo dõi dữ liệu cần sao lưu/khôi phục trước khi chạy lại backend**, vì Git có thể xóa các tệp cũ đang tracked. Xem [hướng dẫn cập nhật giữ dữ liệu](docs/STORAGE_DEPLOYMENT.md).
-
-Giao diện chat ẩn mã trích dẫn nội bộ `[S1]`, `[S1, S2]` trong phần trả lời. Nguồn tham chiếu vẫn hiển thị tên tệp, trang/đoạn và link mở đúng vị trí; backend vẫn giữ mã để kiểm tra trích dẫn.
+Kiểm thử frontend: `npm test`, `npm run test:browser` (Edge headless, API giả lập). Chạy `npm run build` lại với cấu hình thật trước khi triển khai; build test dùng API giả riêng.

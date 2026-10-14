@@ -11,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.config import get_settings
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-HEADING = re.compile(r'^(?:Điều|Chương|Mục|Phần|Article|Chapter|Section)\s+(?:\d+|[IVXLC]+)(?:[\s.:]|$)', re.IGNORECASE)
+HEADING = re.compile(r'^(?:Điều|Chương|Mục|Phần|Article|Chapter|Section|Phụ lục|Appendix)\s+(?:\d+|[IVXLC]+)(?:[\s.:]|$)', re.IGNORECASE)
 
 
 def normalize_text(text: str) -> str:

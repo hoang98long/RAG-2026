@@ -101,6 +101,9 @@ class RetrievalTests(unittest.TestCase):
                 store.client.get_or_create_collection("documents").add(
                     ids=["legacy"], embeddings=[[1.0, 0.0]], documents=["old"],
                     metadatas=[{"document_id": "doc-a"}])
+                store.client.get_or_create_collection("documents_v4_previous").add(
+                    ids=["v4-old"], embeddings=[[1.0, 0.0]], documents=["old"],
+                    metadatas=[{"document_id": "doc-a"}])
                 # Changing chunk config produces a separate compatible collection.
                 with patch("app.rag.vector_store.get_settings", return_value=settings.model_copy(update={"chunk_size": 1800})):
                     other = VectorStore()
@@ -110,6 +113,7 @@ class RetrievalTests(unittest.TestCase):
                 self.assertEqual(store.collection.count(), 1)
                 self.assertEqual(other.collection.count(), 0)
                 self.assertEqual(store.client.get_collection("documents").count(), 0)
+                self.assertEqual(store.client.get_collection("documents_v4_previous").count(), 0)
                 # Release Chroma file handles before TemporaryDirectory cleanup on Windows.
                 store.client._system.stop()
 

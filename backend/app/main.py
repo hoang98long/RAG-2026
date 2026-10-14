@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from app.api.routes import router
 from app.core.config import get_settings
+from app.core.model_errors import register_model_errors
 from app.core.upload_limits import UploadBodyLimitMiddleware
 from app.core.database import Base, engine
 from app.core.logging import setup_logging
@@ -25,6 +26,7 @@ app = FastAPI(title="Local RAG MVP", version="1.0.0", lifespan=lifespan)
 app.add_middleware(UploadBodyLimitMiddleware, max_bytes=settings.upload_max_request_mb * 1024 * 1024)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
+register_model_errors(app)
 app.include_router(router)
 
 

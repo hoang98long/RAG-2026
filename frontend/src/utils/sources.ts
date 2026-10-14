@@ -5,6 +5,9 @@ export function sourceUrl(source: Source): string | undefined {
   const params = new URLSearchParams()
   if (source.chunk_index != null) params.set('chunk', String(source.chunk_index))
   if (source.page != null) params.set('page', String(source.page))
+  if (source.scope) params.set('scope', source.scope)
+  if (source.index_version) params.set('version', source.index_version)
+  if (source.digest) params.set('digest', source.digest)
   return `/documents/${encodeURIComponent(source.document_id)}?${params}`
 }
 

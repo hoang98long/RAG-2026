@@ -11,3 +11,5 @@ langchain-text-splitters>=0.3
 pypdf>=5.0
 docx2txt>=0.8
 loguru>=0.7
+
+openai>=2.0,<3.0

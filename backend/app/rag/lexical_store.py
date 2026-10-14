@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     content TEXT NOT NULL, metadata TEXT NOT NULL, search_text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS chunks_document ON chunks(document_id, chunk_index);
+CREATE INDEX IF NOT EXISTS chunks_section ON chunks(document_id, json_extract(metadata, '$.section_key'));
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     search_text, content='chunks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 0'
 );
@@ -117,3 +118,18 @@ ORDER BY bm25(chunks_fts), chunks.chunk_id LIMIT ?''', (expression, limit))]
             chunks = [{'content': row['content'], 'chunk_index': row['chunk_index'],
                        'page': json.loads(row['metadata']).get('page')} for row in rows]
             return {'chunks': chunks, 'total': total, 'offset': offset, 'limit': limit, 'target_found': found}
+
+
+    def neighbors(self, document_id: str, chunk_index: int, radius: int) -> list[tuple[str, dict]]:
+        with self.connect() as db:
+            return [(row['content'], json.loads(row['metadata'])) for row in db.execute(
+                'SELECT content, metadata FROM chunks WHERE document_id=? AND chunk_index BETWEEN ? AND ? ORDER BY chunk_index',
+                (document_id, max(0, chunk_index-radius), chunk_index+radius))]
+
+    def section_chunks(self, document_id: str, key: str, limit: int) -> tuple[list[tuple[str, dict]], int]:
+        with self.connect() as db:
+            predicate = "document_id=? AND json_extract(metadata, '$.section_key')=?"
+            total = db.execute('SELECT count(*) FROM chunks WHERE '+predicate, (document_id, key)).fetchone()[0]
+            rows = db.execute('SELECT content, metadata FROM chunks WHERE '+predicate+' ORDER BY chunk_index LIMIT ?',
+                              (document_id, key, limit))
+            return [(row['content'], json.loads(row['metadata'])) for row in rows], total

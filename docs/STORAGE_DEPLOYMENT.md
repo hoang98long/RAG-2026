@@ -33,7 +33,7 @@ $backupBackend = Join-Path $backupRoot 'backend'
 New-Item -ItemType Directory -Path $backupBackend | Out-Null
 
 # Bao gom DB va cac file SQLite sidecar; thu muc duoc copy de quy.
-$runtimePaths = @('backend/chroma_data', 'backend/storage', 'backend/.env')
+$runtimePaths = @('backend/chroma_data', 'backend/public_chroma_data', 'backend/storage', 'backend/.env')
 $runtimePaths += @(Get-ChildItem -LiteralPath 'backend' -File |
   Where-Object { $_.Name -match '\.(db|sqlite|sqlite3)(-.*)?$' } |
   ForEach-Object { 'backend/' + $_.Name })
@@ -87,3 +87,7 @@ Rebuild image không tự ingest lại. Reindex chỉ cần khi đổi pipeline/
 Xóa dữ liệu khỏi tracking không xóa các bản đã commit khỏi lịch sử Git. Nếu tài liệu chứa nội dung không được phép công khai và từng commit, cần xử lý lịch sử riêng trước khi đưa repository lên GitHub.
 
 Tham khảo: [Git gitignore](https://git-scm.com/docs/gitignore), [Git rm --cached](https://git-scm.com/docs/git-rm).
+
+## Kho public từ pipeline v5
+
+Backup thêm `backend/public_chroma_data/` (hoặc volume `public_chroma_data`) và DB/upload tại `backend/storage/public/`. Các mục này được ignore. Dữ liệu private hiện có giữ nguyên đường dẫn; không copy sang public. Chi tiết: [PUBLIC_PRIVATE_RAG.md](PUBLIC_PRIVATE_RAG.md).

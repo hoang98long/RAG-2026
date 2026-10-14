@@ -238,3 +238,9 @@ __marimo__/
 # Machine-specific environment files (keep configuration templates).
 .env.*
 !.env.example
+
+/public_chroma_data/
+/backend/public_chroma_data/
+
+/frontend/test-results/
+/frontend/playwright-report/

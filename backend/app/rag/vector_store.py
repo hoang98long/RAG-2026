@@ -1,5 +1,6 @@
 import hashlib
 import json
+from app.rag.sections import section_key
 from functools import lru_cache
 from itertools import islice
 from pathlib import Path
@@ -16,17 +17,22 @@ from app.rag.retrieval import fuse_rankings, select_sources
 
 
 class VectorStore:
-    def __init__(self):
+    def __init__(self, scope: str = "private"):
+        if scope not in {"private", "public"}:
+            raise ValueError("Invalid vector store scope")
+        self.scope = scope
         self.settings = get_settings()
-        self.client = chromadb.PersistentClient(path=self.settings.chroma_dir)
-        signature = json.dumps({'version': 4, 'embedding': self.settings.embedding_model,
+        self.chroma_dir = self.settings.public_chroma_dir if scope == "public" else self.settings.chroma_dir
+        self.client = chromadb.PersistentClient(path=self.chroma_dir)
+        signature = json.dumps({'version': 5, 'embedding': self.settings.embedding_model,
                                 'instruction': self.settings.embedding_query_instruction,
                                 'chunk_size': self.settings.chunk_size,
                                 'chunk_overlap': self.settings.chunk_overlap}, sort_keys=True)
-        name = 'documents_v4_' + hashlib.sha256(signature.encode()).hexdigest()[:16]
+        name = 'documents_v5_' + hashlib.sha256(signature.encode()).hexdigest()[:16]
         self.collection = self.client.get_or_create_collection(name, metadata={'hnsw:space': 'cosine'})
-        self.lexical = LexicalStore(Path(self.settings.chroma_dir) / 'lexical' / f'{name}.sqlite3')
-        self.embeddings = OllamaEmbeddings(model=self.settings.embedding_model, base_url=self.settings.ollama_base_url)
+        self.lexical = LexicalStore(Path(self.chroma_dir) / 'lexical' / f'{name}.sqlite3')
+        self.embeddings = OllamaEmbeddings(model=self.settings.embedding_model, base_url=self.settings.ollama_base_url,
+                                            client_kwargs={"timeout": self.settings.embedding_timeout})
         self._lock = RLock()
 
     def rebuild_lexical(self):
@@ -59,6 +65,8 @@ class VectorStore:
                         if key in chunk.metadata:
                             item[key] = chunk.metadata[key]
                     metadata.append(item)
+                for item in metadata:
+                    item['section_key'] = section_key(item.get('section', ''))
                 ids = [f'{document_id}-{index}' for index in range(count, count + len(batch))]
                 self.collection.upsert(ids=ids, documents=texts, embeddings=vectors, metadatas=metadata)
                 self.lexical.upsert(ids, texts, metadata)
@@ -71,7 +79,7 @@ class VectorStore:
             self.lexical.mark_dirty(False)
             return count
 
-    def search(self, query: str, limit: int, *, use_rerank: bool = True) -> list[dict]:
+    def candidates(self, query: str) -> list[dict]:
         with self._lock:
             count = self.collection.count()
             if not count or not query.strip():
@@ -97,7 +105,35 @@ class VectorStore:
                                    'chunk_index': meta['chunk_index'], 'page': meta.get('page'),
                                    'section': meta.get('section', ''), 'table_header': meta.get('table_header', ''),
                                    'score': score, 'similarity': similarities.get(identifier)})
-        return select_sources(rerank(query, candidates, enabled=use_rerank), limit, self.settings.max_context_chars)
+        return [{**item, 'scope': self.scope, 'index_version': self.collection.name,
+                 'digest': hashlib.sha256(item['content'].encode()).hexdigest()[:16]} for item in candidates]
+
+    def search(self, query: str, limit: int, *, use_rerank: bool = True) -> list[dict]:
+        return select_sources(rerank(query, self.candidates(query), enabled=use_rerank), limit, self.settings.max_context_chars)
+
+    def expand(self, source: dict, *, whole_section: bool, limit: int) -> tuple[list[dict], int]:
+        with self._lock:
+            self._ensure_lexical()
+            key = section_key(source.get('section', ''))
+            if whole_section and key:
+                rows, total = self.lexical.section_chunks(source['document_id'], key, limit)
+            else:
+                rows = self.lexical.neighbors(source['document_id'], source['chunk_index'], self.settings.neighbor_chunks)
+                total = len(rows)
+            result = []
+            for text, meta in rows:
+                result.append({**source, 'content': text, 'chunk_index': meta['chunk_index'], 'page': meta.get('page'),
+                               'section': meta.get('section', ''), 'table_header': meta.get('table_header', ''),
+                               'digest': hashlib.sha256(text.encode()).hexdigest()[:16]})
+            return result, total
+
+    def related_section(self, source: dict, key: str, limit: int) -> tuple[list[dict], int]:
+        with self._lock:
+            self._ensure_lexical()
+            rows, total = self.lexical.section_chunks(source['document_id'], key, limit)
+            return [{**source, 'content': text, 'chunk_index': meta['chunk_index'], 'page': meta.get('page'),
+                     'section': meta.get('section', ''), 'table_header': meta.get('table_header', ''),
+                     'digest': hashlib.sha256(text.encode()).hexdigest()[:16]} for text, meta in rows], total
 
     def document_page(self, document_id: str, **kwargs) -> dict:
         with self._lock:
@@ -111,12 +147,12 @@ class VectorStore:
         with self._lock:
             for collection in self.client.list_collections():
                 name = collection if isinstance(collection, str) else collection.name
-                if name == 'documents' or name.startswith(('documents_v2_', 'documents_v3_', 'documents_v4_')):
+                if name == 'documents' or name.startswith(('documents_v2_', 'documents_v3_', 'documents_v4_', 'documents_v5_')):
                     self.client.get_collection(name).delete(where={'document_id': document_id})
-            for path in (Path(self.settings.chroma_dir) / 'lexical').glob('documents_v*.sqlite3'):
+            for path in (Path(self.chroma_dir) / 'lexical').glob('documents_v*.sqlite3'):
                 LexicalStore(path).delete_document(document_id)
 
 
 @lru_cache
-def get_vector_store() -> VectorStore:
-    return VectorStore()
+def get_vector_store(scope: str = "private") -> VectorStore:
+    return VectorStore(scope)

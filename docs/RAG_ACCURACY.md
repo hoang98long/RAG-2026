@@ -47,3 +47,7 @@ Các hướng này chưa được coi là đã hoàn thành chỉ vì đã nêu 
 Lexical index đã chuyển sang SQLite FTS5 trên đĩa, không giữ full corpus trong RAM khi query. Streaming extraction/embedding batch và reader phân trang giảm tải cho một tệp lớn. Phạm vi dense/lexical tăng lên 48 mỗi nhánh, rerank 32, giữ giới hạn nguồn và ngân sách prompt.
 
 Không coi corpus lớn hơn đồng nghĩa chất lượng giữ nguyên: FTS5 thay thuật toán/điểm BM25, phân đoạn DOCX theo cửa sổ có thể đổi ranh giới, nguồn liên quan cạnh tranh với nhiều ứng viên hơn. Cần reindex v4, rà nhãn chunk, so sánh lại các câu hỏi đúng trang/đoạn và câu không có đáp án. Chưa triển khai hàng đợi công việc bền vững, nhiều worker ghi hoặc dịch vụ vector phân tán.
+
+## Pipeline v5
+
+Hai kho private/public và truy xuất mở rộng được mô tả tại [PUBLIC_PRIVATE_RAG.md](PUBLIC_PRIVATE_RAG.md). Các giới hạn 2 đoạn/tài liệu trong phần nghiên cứu trước áp dụng baseline/báo cáo; chat v5 tách bằng chứng để trả lời khỏi link nguồn hiển thị.

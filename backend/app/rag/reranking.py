@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import get_settings
 from app.rag.contextual import retrieval_text
+from app.services.model_provider import assert_public_sources
 
 
 class RelevanceGrade(BaseModel):
@@ -44,14 +45,16 @@ def _cross_encoder(model: str, device: str, max_length: int):
 _encoder_lock = RLock()
 
 
-def rerank(query: str, candidates: list[dict], *, enabled: bool = True) -> list[dict]:
+def rerank(query: str, candidates: list[dict], *, enabled: bool = True, model: str | None = None, llm=None) -> list[dict]:
     settings = get_settings()
+    if model == "openai":
+        assert_public_sources(candidates)
     if not enabled or settings.rerank_backend == "off" or not candidates:
         return candidates
     pool = candidates[:settings.rerank_candidates]
     try:
-        if settings.rerank_backend == "ollama":
-            llm = ChatOllama(model=settings.rerank_model or settings.llm_model,
+        if settings.rerank_backend == "ollama" or model == "openai":
+            llm = llm or ChatOllama(model=settings.rerank_model or model or settings.llm_model,
                              base_url=settings.ollama_base_url, temperature=0,
                              num_ctx=settings.llm_num_ctx, num_predict=1024,
                              client_kwargs={"timeout": settings.rerank_timeout})
@@ -82,7 +85,7 @@ def rerank(query: str, candidates: list[dict], *, enabled: bool = True) -> list[
                 raise ValueError("Invalid cross-encoder scores")
             scores = dict(enumerate(values))
             threshold = settings.cross_encoder_min_score
-        ranked = [{**item, "rerank_score": scores[index], "rerank_method": settings.rerank_backend}
+        ranked = [{**item, "rerank_score": scores[index], "rerank_method": "openai" if model == "openai" else settings.rerank_backend}
                   for index, item in enumerate(pool) if threshold is None or scores[index] >= threshold]
         # Stable ties retain RRF order. Scores from different backends have different scales.
         return sorted(ranked, key=lambda item: -item["rerank_score"])

@@ -31,11 +31,14 @@ class BM25Index:
         return sorted(scores, key=lambda index: (-scores[index], index))[:limit]
 
 
-def fuse_rankings(*rankings: list[str]) -> list[tuple[str, float]]:
+def fuse_rankings(*rankings: list[str], weights: list[float] | None = None) -> list[tuple[str, float]]:
     scores: dict[str, float] = defaultdict(float)
-    for ranking in rankings:
+    if weights is not None and len(weights) != len(rankings):
+        raise ValueError("Each ranking requires a weight")
+    for index, ranking in enumerate(rankings):
+        weight = weights[index] if weights is not None else 1.0
         for rank, identifier in enumerate(dict.fromkeys(ranking), start=1):
-            scores[identifier] += 1 / (60 + rank)
+            scores[identifier] += weight / (60 + rank)
     return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
 
 

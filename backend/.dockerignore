@@ -24,3 +24,5 @@ chroma_data/
 storage/
 logs/
 data/
+
+public_chroma_data/

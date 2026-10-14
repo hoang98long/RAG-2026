@@ -37,10 +37,25 @@ services:
       UPLOAD_MAX_REQUEST_MB: ${UPLOAD_MAX_REQUEST_MB:-512}
       UPLOAD_MAX_FILES: ${UPLOAD_MAX_FILES:-20}
       INDEX_PAGE_SIZE: ${INDEX_PAGE_SIZE:-500}
+      PUBLIC_DATABASE_URL: sqlite:////app/storage/public/public.db
+      PUBLIC_CHROMA_DIR: /app/public_chroma_data
+      PUBLIC_UPLOAD_DIR: /app/storage/public/uploads
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-90}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
+      EMBEDDING_TIMEOUT: ${EMBEDDING_TIMEOUT:-120}
+      REVIEW_BATCH_SIZE: ${REVIEW_BATCH_SIZE:-6}
+      QUERY_EXPANSION: ${QUERY_EXPANSION:-true}
+      GROUNDING_VERIFICATION: ${GROUNDING_VERIFICATION:-true}
+      EVIDENCE_MAX_CHUNKS: ${EVIDENCE_MAX_CHUNKS:-80}
+      EXHAUSTIVE_CONTEXT_CHARS: ${EXHAUSTIVE_CONTEXT_CHARS:-32000}
+      EXHAUSTIVE_NUM_PREDICT: ${EXHAUSTIVE_NUM_PREDICT:-4096}
+      NEIGHBOR_CHUNKS: ${NEIGHBOR_CHUNKS:-1}
       OLLAMA_BASE_URL: http://ollama:11434
       CHROMA_DIR: /app/chroma_data
       UPLOAD_DIR: /app/storage/uploads
-    volumes: [uploads:/app/storage, chroma_data:/app/chroma_data]
+    volumes: [uploads:/app/storage, chroma_data:/app/chroma_data, public_chroma_data:/app/public_chroma_data]
     ports: ["8000:8000"]
     depends_on: [ollama]
   frontend:
@@ -48,6 +63,7 @@ services:
     ports: ["3000:80"]
     depends_on: [backend]
 volumes:
+  public_chroma_data:
   chroma_data:
   uploads:
   ollama_data:

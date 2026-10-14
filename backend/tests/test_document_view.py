@@ -1,4 +1,5 @@
 import io
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +55,17 @@ class DocumentViewTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['data']['chunks'], chunks)
         self.assertEqual(response.json()['data']['file_type'], 'pdf')
+
+    def test_source_version_and_content_changes_are_reported_instead_of_linking_wrong_passage(self):
+        chunks = [{'content': 'Source passage', 'chunk_index': 4, 'page': 3}]
+        with patch('app.api.routes.get_settings', return_value=self.settings), \
+             patch('app.api.routes.get_vector_store') as store:
+            store.return_value.collection.name = 'documents_v5_current'
+            store.return_value.document_page.return_value = {'chunks': chunks, 'total': 5, 'offset': 0, 'limit': 50, 'target_found': True}
+            self.assertEqual(self.client.get('/documents/source/content?version=old&chunk=4').status_code, 409)
+            self.assertEqual(self.client.get('/documents/source/content?chunk=4&digest=wrong').status_code, 409)
+            digest = hashlib.sha256(b'Source passage').hexdigest()[:16]
+            self.assertEqual(self.client.get(f'/documents/source/content?chunk=4&version=documents_v5_current&digest={digest}').status_code, 200)
 
     def test_catalogue_is_paginated_and_rejects_unbounded_page_size(self):
         self.db.scalar.return_value = 127
