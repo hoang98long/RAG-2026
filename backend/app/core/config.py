@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
     database_url: str = "sqlite:///./rag.db"
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5:7b"
@@ -17,12 +17,21 @@ class Settings(BaseSettings):
     public_database_url: str = "sqlite:///./storage/public/public.db"
     public_chroma_dir: str = "./public_chroma_data"
     public_upload_dir: str = "./storage/public/uploads"
+    internal_access_token: SecretStr = SecretStr("")
+    session_max_age: int = Field(default=14400, ge=300, le=86400)
+    session_cookie_secure: bool = False
+    public_chat_rate_limit: int = Field(default=20, ge=1, le=1000)
+    public_chat_max_concurrent: int = Field(default=2, ge=1, le=16)
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-4.1-mini"
     openai_timeout: float = Field(default=90, gt=0)
     llm_timeout: float = Field(default=180, gt=0)
     embedding_timeout: float = Field(default=120, gt=0)
     review_batch_size: int = Field(default=6, ge=1, le=12)
+    report_context_chars: int = Field(default=10000, ge=2000, le=24000)
+    report_section_chunks: int = Field(default=8, ge=2, le=24)
+    report_rerank_candidates: int = Field(default=12, ge=1, le=48)
+    report_max_seconds: float = Field(default=420, gt=0, le=1800)
     query_expansion: bool = True
     grounding_verification: bool = True
     evidence_max_chunks: int = Field(default=80, ge=6, le=200)
@@ -42,6 +51,7 @@ class Settings(BaseSettings):
     rerank_backend: Literal["off", "ollama", "cross_encoder"] = "ollama"
     rerank_model: str = ""
     rerank_candidates: int = Field(default=32, ge=1)
+    rerank_diversity_lambda: float = Field(default=0.75, ge=0, le=1, allow_inf_nan=False)
     rerank_batch_size: int = Field(default=6, ge=1, le=16)
     rerank_min_grade: int = Field(default=2, ge=0, le=3)
     rerank_timeout: float = Field(default=120, gt=0)
@@ -58,6 +68,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_rag(self):
+        token = self.internal_access_token.get_secret_value().strip()
+        if token and (len(token) < 32 or len(token) > 512):
+            raise ValueError('INTERNAL_ACCESS_TOKEN must contain 32 to 512 characters')
+        if '*' in {origin.strip() for origin in self.cors_origins.split(',')}:
+            raise ValueError('CORS_ORIGINS must list explicit trusted origins')
         private_db, public_db = make_url(self.database_url), make_url(self.public_database_url)
         if public_db.get_backend_name() != 'sqlite' or not public_db.database or public_db.database == ':memory:':
             raise ValueError('PUBLIC_DATABASE_URL must be a persistent SQLite database')

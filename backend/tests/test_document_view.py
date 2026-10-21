@@ -5,9 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from auth_helpers import internal_client
 from pypdf import PdfWriter
 from app.core.config import Settings
-from app.core.database import get_db
+from app.core.database import get_scope_db
 from app.main import app
 from app.models.models import Document
 
@@ -29,10 +30,10 @@ class DocumentViewTests(unittest.TestCase):
         self.record = Document(id='source', filename='source.pdf', filepath=str(self.file))
         self.db = MagicMock()
         self.db.get.return_value = self.record
-        app.dependency_overrides[get_db] = lambda: self.db
-        self.addCleanup(lambda: app.dependency_overrides.pop(get_db, None))
+        app.dependency_overrides[get_scope_db] = lambda: self.db
+        self.addCleanup(lambda: app.dependency_overrides.pop(get_scope_db, None))
         self.settings = Settings(_env_file=None, upload_dir=str(self.uploads))
-        self.client = TestClient(app)
+        self.client = internal_client(self, app)
 
     def test_pdf_served_inline_and_supports_ranges(self):
         with patch('app.api.routes.get_settings', return_value=self.settings):

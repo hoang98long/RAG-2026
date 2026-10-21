@@ -129,3 +129,103 @@ Dependency được cập nhật các bản vá trong khoảng phiên bản hi�
 Tham khảo triển khai: [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [TanStack Query cancellation](https://tanstack.com/query/latest/docs/framework/react/guides/query-cancellation), [Playwright](https://playwright.dev/docs/test-webserver).
 
 Nội dung Markdown trong chat/báo cáo không tự tải ảnh từ URL do model sinh; hiển thị mô tả thay thế để tránh request ngoài ý muốn và ảnh lỗi. Liên kết vẫn mở khi người dùng bấm. Lỗi dịch vụ kiểm chứng được phân biệt với việc thiếu bằng chứng trong câu trả lời.
+
+## Kiểm tra nguồn còn khả dụng và phạm vi bằng chứng
+
+Đợt rà soát này giữ nguyên định dạng collection v5, embedding, schema và đường dẫn dữ liệu. Máy đã ingest v5 không cần ingest lại chỉ để nhận các thay đổi này.
+
+- Chat và báo cáo kiểm tra các tài liệu ứng viên với DB metadata của đúng kho trước khi đưa nội dung vào planner, rerank hoặc sinh câu trả lời. Chỉ dùng đoạn có record còn tồn tại, tên tệp khớp và tệp gốc còn nằm trong thư mục upload của kho đó. Đoạn còn sót sau upload lỗi, tệp bị mất hoặc đường dẫn trỏ sang kho khác bị loại khỏi lần truy xuất. Kiểm tra theo các ID ứng viên, mỗi truy vấn SQL tối đa 256 ID; không tải cả danh mục tài liệu. Kiểm tra lại khi mở rộng đoạn/mục để xử lý tài liệu bị xóa giữa chừng.
+- OpenAI chỉ mở metadata public trong bước kiểm tra nguồn. Local chọn cả hai kho kiểm tra riêng từng DB. Lịch sử vẫn được lưu theo quy tắc phân kho hiện có. Việc lọc không tự xóa chỉ mục hoặc sửa dữ liệu; nếu mất tệp gốc cần khôi phục đúng kho hoặc ingest lại có chủ đích. Không kiểm tra lại SHA-256 của toàn bộ tệp ở mỗi câu hỏi; thay tệp trực tiếp trên ổ đĩa vẫn cần reindex để đồng bộ nội dung.
+- Sau các đoạn truy xuất chính, ngữ cảnh ưu tiên phụ lục được hỏi, rồi phụ lục được nguồn tham chiếu, trước khi mở rộng các mục chung. `coverage.section_retained` đếm số đoạn thực sự được đưa vào prompt theo từng mục. Phụ lục không tìm thấy hoặc chỉ giữ được một phần làm `completeness_unverified=true`, kể cả câu hỏi không chứa từ “toàn bộ”. `incomplete_referenced_sections` phân biệt thiếu trong ngữ cảnh với `missing_referenced_sections` là chưa tìm thấy mục.
+- Reviewer yêu cầu bằng chứng cho từng dòng có trích dẫn, theo từng mã nguồn trên dòng đó. Một claim chỉ xuất hiện ở dòng khác không thể xác nhận dòng đang dẫn sai nguồn. Model được hướng dẫn đặt trích dẫn cùng dòng với kết luận. Đối chiếu nguyên văn vẫn chỉ là lớp kiểm tra bổ sung; đánh giá quan hệ ngữ nghĩa phụ thuộc reviewer và có thể sai hoặc từ chối câu đúng.
+- CLI `app.evaluate` cũng áp dụng kiểm tra metadata/tệp nguồn, cho cả baseline và `--expanded`; báo cáo ghi `configuration.catalogue_validated=true`. Nhờ đó phép đo không tính các đoạn vector không còn mở được qua ứng dụng là bằng chứng hợp lệ. CLI vẫn chỉ đo retrieval, không đo chất lượng câu trả lời cuối cùng.
+- Giao diện trừ chiều cao thực tế của thanh upload nền khi bố trí chat/reader, tránh đẩy ô nhập chat ra ngoài màn hình desktop. Khi chat lỗi, câu hỏi được khôi phục nếu ô nhập còn trống; không ghi đè bản nháp mới người dùng đang soạn. Không tự gửi lại request chat.
+
+Kiểm thử sau thay đổi: 84 kiểm thử backend, 11 kiểm thử tiện ích frontend, 14 kịch bản trên Edge và build production đạt. Các kiểm thử mới dùng SQLite tạm và mô hình/API giả; kiểm tra nguồn mồ côi, tệp mất/sai kho, tài liệu bị xóa giữa chừng, truy vấn SQL có giới hạn, phụ lục bị chen khỏi ngữ cảnh, claim dẫn nhầm dòng, giữ bản nháp khi lỗi và chat trong lúc upload nền. Đây không phải số đo accuracy trên tài liệu thật hoặc cam kết không còn lỗi.
+
+## Đa dạng ứng viên và phân bổ ngữ cảnh
+
+Rerank bổ sung MMR theo thứ hạng với `RERANK_DIVERSITY_LAMBDA=0.75`: giữ một phần tư ứng viên đầu, chọn thêm trong cửa sổ tối đa bốn lần `RERANK_CANDIDATES` để các đoạn gần trùng ít chiếm hết lượt chấm. Tên tệp không tham gia độ giống; code dùng bigram văn bản nguồn, không gọi thêm embedding hoặc LLM. Giá trị 1 giữ cách chọn top pool cũ. Rerank tắt thì MMR không chạy.
+
+Trong từng nhóm nội dung mở rộng cùng mức ưu tiên, lấy luân phiên theo kho/tài liệu/mục để một phụ lục dài không chiếm toàn bộ ngữ cảnh trước phụ lục khác. Vẫn ưu tiên anchor và phụ lục được hỏi, giữ giới hạn ký tự/số đoạn và cảnh báo thiếu. Không gộp các điều khoản gần giống có thể khác số liệu hoặc phủ định.
+
+CLI thêm `--no-diversity` để so sánh với thứ tự cũ; báo cáo thêm `complete_evidence_rate` là tỷ lệ câu tìm đủ tất cả bằng chứng được gán nhãn. Metric không kiểm tra nội dung câu trả lời hoặc chứng minh đã tìm hết corpus. Cấu hình, công thức, nguồn nghiên cứu, cách đo và đánh đổi được ghi tại [RAG_ACCURACY.md](RAG_ACCURACY.md#rà-soát-thuật-toán-mmr-và-phân-bổ-ngữ-cảnh).
+
+Collection vẫn là v5; nhận nâng cấp không cần ingest lại nếu đã dùng v5. Chưa có benchmark với model thật trên tài liệu của người dùng, nên mặc định 0.75 cần được đánh giá/hiệu chỉnh thay vì coi là giá trị tối ưu.
+
+## Truy cập từ bên ngoài: quyền public và quyền nội bộ
+
+Ứng dụng có hai mức truy cập. Người chưa đăng nhập chỉ xem/hỏi kho public. Quyền nội bộ mở thêm private/all và quản lý tài liệu. Khóa truy cập nội bộ độc lập với `OPENAI_API_KEY`; không đưa bất kỳ khóa nào vào biến `VITE_*` hoặc mã frontend.
+
+| Chức năng | Chưa đăng nhập | Có quyền nội bộ |
+| --- | --- | --- |
+| Chat `scope=public`, đọc/danh mục/thống kê public | Cho phép | Cho phép |
+| Chat `scope=private/all`, đọc/danh mục/thống kê private | 401 | Cho phép |
+| Upload hoặc xóa tài liệu ở cả hai kho | 401 | Cho phép |
+| Tạo báo cáo từ private | 401 | Cho phép |
+| OpenAI với `scope=private/all` | Không cho phép | Vẫn không cho phép |
+
+### Cấu hình và đăng nhập
+
+Trên từng máy triển khai, thêm vào **`.env` thật** (giữ nguyên các đường dẫn DB/index/upload đã có):
+
+```dotenv
+INTERNAL_ACCESS_TOKEN=<khóa ngẫu nhiên từ 32 đến 512 ký tự>
+SESSION_MAX_AGE=14400
+SESSION_COOKIE_SECURE=true
+CORS_ORIGINS=https://ten-mien-cua-ban.example
+PUBLIC_CHAT_RATE_LIMIT=20
+PUBLIC_CHAT_MAX_CONCURRENT=2
+```
+
+Tạo khóa trên máy quản trị bằng `python -c "import secrets; print(secrets.token_urlsafe(32))"`, lưu riêng và nhập tại nút **Đăng nhập nội bộ**. Không commit khóa. Các `.env.example` để `INTERNAL_ACCESS_TOKEN=` trống; khi chưa cấu hình, private và các thao tác quản lý bị khóa, không tự mở quyền cho localhost hoặc mạng LAN. Khóa cần ngẫu nhiên, không chỉ một chuỗi lặp đủ độ dài.
+
+`SESSION_COOKIE_SECURE=false` chỉ dành cho phát triển qua HTTP trên máy tin cậy; HTTPS ở production đặt `true`. Giao diện mặc định gọi `/api`, Vite proxy cho phát triển và Nginx proxy cho Docker. Cách này giữ API cùng origin với giao diện, tránh phụ thuộc cookie giữa hai site. Khi chạy Docker, cấu hình tại `.env` gốc cho Compose; khi chạy backend trực tiếp, dùng `backend/.env`. Không sửa `.env.example` để cung cấp khóa thật.
+
+### Cách kiểm soát quyền
+
+- Backend kiểm tra quyền trên API, không dựa vào option bị ẩn trên giao diện. Các API ghi được chặn ở middleware trước khi FastAPI đọc/spool multipart. JSON chat/report tối đa 64 KiB, JSON auth tối đa 16 KiB; upload giữ giới hạn dung lượng riêng.
+- `/auth/login` nhận khóa qua HTTPS và cấp session ngẫu nhiên qua cookie `HttpOnly`, `SameSite=Lax`. Khóa gốc không được lưu trong localStorage/sessionStorage hoặc trả về response. Server chỉ giữ hash session và thời hạn trong bộ nhớ, tối đa 256 phiên. `/auth/logout` thu hồi phiên ở server; cookie cũ không dùng lại được. Đổi khóa hoặc khởi động lại process làm hết hiệu lực phiên cũ.
+- Thao tác ghi dùng cookie phải có `Origin` của ứng dụng hoặc một origin được cấu hình rõ trong `CORS_ORIGINS`; wildcard `*` bị từ chối. Client quản trị gọi trực tiếp API có thể dùng `Authorization: Bearer <INTERNAL_ACCESS_TOKEN>`; không truyền khóa trên URL. Header Bearer sai không được rơi về cookie đúng.
+- Chat public không khởi tạo session metadata private, kể cả khi dùng model local. Scope được kiểm tra lại ở ứng viên, đoạn mở rộng, bằng chứng cuối cùng và nguồn trả về. Câu hỏi hay nội dung tài liệu không thể thay đổi scope thực thi. Các tham số ngoài schema như `history`, `tools`, `database_url`, `system_prompt` bị từ chối.
+- Giao diện chỉ mở link Markdown do model sinh nếu khớp chính xác một nguồn của câu trả lời và cùng origin. Nguồn/danh mục/nội dung trả về sai kho bị chặn trước khi hiển thị. Đăng xuất xóa hội thoại, bản nháp, hàng chờ và cache ứng dụng; các tab khác nhận thông báo đăng xuất. Quyền hết hạn vẫn được backend kiểm tra ở từng request.
+- API trả `Cache-Control: no-store`; Nginx có CSP, chống nhúng iframe và `nosniff`. Public chat chưa đăng nhập mặc định giới hạn 20 yêu cầu/phút/IP, tối đa 2 câu đang xử lý trong một process, trả 429 khi vượt. Đây không phải hạn mức tài khoản hay cơ chế chống DoS phân tán.
+
+### Docker và reverse proxy
+
+Compose chỉ mở cổng frontend `3000` ra các interface. Backend `8000`, Ollama `11434`, Chroma cũ `8001` bind `127.0.0.1`; Docker network vẫn cho các service cần thiết liên lạc. Không mở trực tiếp các cổng dữ liệu/model ra Internet. Backend thực tế dùng Chroma nhúng; service Chroma cũ chuyển sang profile `legacy-chroma`, không cần chạy mặc định hoặc cho ghi song song cùng volume.
+
+Máy đã chạy Compose cũ cần dừng service Chroma cũ bằng `docker compose stop chroma`, rồi cập nhật/recreate các service. Giữ nguyên project name và volumes; không dùng `down -v`, không copy DB từ máy khác. Các thay đổi này không yêu cầu ingest lại v5.
+
+Đặt HTTPS reverse proxy phía trước frontend và cấu hình `CORS_ORIGINS` đúng origin bên ngoài. Proxy `/api` chỉ chuyển tới backend cố định; Nginx ghi lại `X-Forwarded-For` từ địa chỉ kết nối thay vì tin header do client gửi. `TRUSTED_PROXY_IPS` trong Compose mặc định `*` để Uvicorn nhận proxy của Docker, chỉ phù hợp khi backend được cô lập như cấu hình loopback/network hiện tại. Nếu tự mở backend hoặc đổi topology, giới hạn danh sách proxy được tin cậy. Với thêm một TLS ingress, cấu hình real IP theo đúng IP proxy tin cậy nếu cần hạn mức từng người dùng; mặc định nhiều người qua cùng proxy/NAT có thể dùng chung hạn mức.
+
+Mô hình quyền hiện tại là **public và một khóa quản trị nội bộ dùng chung**, chưa có tài khoản cá nhân, phân quyền từng tài liệu/nhóm, nhật ký danh tính hay SSO. Session và hạn mức ở bộ nhớ phù hợp một process hiện tại; mở rộng nhiều worker cần session/rate-limit store chung và xem lại Chroma. Người đã được phép đọc vẫn có thể tải/lưu nội dung, nên đăng xuất không thu hồi bản đã tải xuống.
+
+Cách thiết kế dựa trên nguyên tắc kiểm tra từng request và từ chối mặc định của [OWASP Authorization](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html), kết hợp [kiểm tra Origin và SameSite để chống CSRF](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html). Đây không phải chứng nhận bảo mật hoặc thay thế đánh giá triển khai thực tế.
+
+### Giao diện và kiểm chứng câu trả lời
+
+Bố cục mới thống nhất sidebar, thanh điều hướng/quyền truy cập, khoảng cách và hệ màu. Dashboard có thống kê cùng lối vào chức năng chính; chat giữ vùng cuộn riêng, reader giữ viewport và thanh upload nền được tính vào chiều cao. Người public chỉ thấy scope public và không có thao tác quản lý.
+
+Tiếp tục dùng hybrid/RRF, MMR và mở rộng mục/phụ lục. Lớp đối chiếu quote bổ sung kiểm tra số/mã trong claim phải có trong quote nguyên văn; ví dụ claim `48 tháng` không được xác nhận bằng quote `24 tháng`, kể cả reviewer báo supported. Đây là kiểm tra cho cụm claim trực tiếp, chưa chứng minh toàn bộ ngữ nghĩa hay tính toán suy ra. Giữ nguyên định dạng số từ nguồn giúp tránh từ chối do thay cách viết. Chưa có benchmark accuracy với model thật trên tài liệu của người dùng.
+
+Tại frontend có thêm `npm run test:access`: build `/api`, chạy Edge với API thật trên loopback và hai SQLite/upload tạm, kiểm tra public/private, cookie HttpOnly, đăng nhập/đăng xuất và thu hồi cookie. Không gọi Ollama/OpenAI hoặc đọc DB đã ingest. Cần Python trong `backend/venv`; có thể chỉ định `RAG_TEST_PYTHON`. Bộ test workflow vẫn dùng API giả. Khi triển khai, chạy build theo cấu hình thật và kiểm tra Nginx/TLS tại máy triển khai.
+
+Báo cáo cũng sử dụng `GROUNDING_VERIFICATION` trước khi xuất nội dung, thay cho chỉ kiểm tra mã trích dẫn như trước. Báo cáo hiện đã chuyển sang truy xuất và kiểm chứng theo từng mục; xem REPORT_RAG.md. Truy xuất có giới hạn không chứng minh đã đọc toàn corpus; kiểm chứng có thể tăng độ trễ hoặc từ chối khi không đủ bằng chứng.
+
+Đợt rà soát này đã kiểm tra giao diện desktop/mobile, trạng thái upload, các ca public/private và luồng đăng nhập thật bằng Edge với API/DB tạm. Các file DB/tài liệu đã ingest không bị thay thế; khóa trong các tệp mẫu để trống. Kiểm thử cookie qua API thật không thay thế việc kiểm tra Nginx, TLS và firewall của máy triển khai.
+
+Kết quả kiểm tra cập nhật ngày 20/10/2026: **131 kiểm thử backend, 14 kiểm thử tiện ích frontend, 22 kịch bản Edge** đạt; build production thành công. Luồng truy cập bằng Edge với API thật và DB tạm cũng đạt. Compose kiểm tra cấu hình/port; chưa chạy triển khai Nginx/TLS trên máy production. Không có số đo accuracy với Ollama/OpenAI thật trong lượt này.
+
+## Kiểm tra vận hành trước thử nghiệm khách hàng
+
+Quy trình cấu hình, backup, healthcheck, thử upload/chat/nguồn, nghiệm thu ranh giới public/private và rollback: [PILOT_DEPLOYMENT.md](PILOT_DEPLOYMENT.md). API `/ready` và `/chat/models` chỉ probe inventory Ollama có giới hạn/cache, không mở private DB hoặc gửi tài liệu tới bên ngoài. `app.preflight` là công cụ CLI chỉ đọc chạy bởi người vận hành; không mở thành API public và không tự ingest/reindex.
+
+Giao diện chặn gửi khi model/embedding chưa sẵn sàng, giữ câu hỏi để thử lại, có phục hồi khi không kiểm tra được phiên truy cập. Bộ kiểm thử bổ sung có luồng DOCX → SQLite/Chroma/FTS → RAG có reviewer → nguồn có fingerprint → xóa theo kho, với model/embedding giả lập và dữ liệu tạm. Đây không phải benchmark accuracy hoặc tải trên máy khách hàng.
+
+
+## Báo cáo theo dàn ý (21/10/2026)
+
+Chức năng báo cáo được nâng cấp thành lập dàn ý → tìm bằng chứng từng mục → viết/kiểm chứng → ghép báo cáo có coverage. Có thể chọn tài liệu nội bộ, model local và dàn ý; bộ lọc áp dụng trước giới hạn dense/FTS rồi kiểm tra lại ở source catalogue và bằng chứng cuối. `/report` vẫn yêu cầu quyền nội bộ, không thêm đường cho OpenAI đọc private. Xem [REPORT_RAG.md](REPORT_RAG.md) để biết nguồn nghiên cứu, cấu hình, ý nghĩa trạng thái, cách xuất và các giới hạn.
+
+Backend có runner kiểm thử cách ly `python tests/run_isolated.py`, dùng subprocess với default storage/CWD tạm và không đọc `.env` thật. Model/embedding trong các bài kiểm thử báo cáo đều được giả lập; không dùng số mục đã kiểm chứng hay số test đạt để suy ra accuracy trên model/tài liệu thật.

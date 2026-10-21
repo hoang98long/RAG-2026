@@ -1,6 +1,11 @@
 import axios from 'axios'
+import { validateSources, ScopeViolation } from '../utils/scope'
 import type { ApiResponse, Document, Source, Scope, ChatScope, ChatModel, Coverage } from '../types'
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000', timeout: 20000 })
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api', timeout: 20000, withCredentials: true })
+api.interceptors.response.use(response => response, error => {
+  if (error.response?.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('documind-access-expired'))
+  return Promise.reject(error)
+})
 const configuredTimeout = Number(import.meta.env.VITE_AI_TIMEOUT_MS)
 const aiTimeout = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 600000
 function payload<T>(value: ApiResponse<T>): T {
@@ -29,12 +34,16 @@ export const deleteDocument = (id: string, scope: Scope = 'private') => api.dele
 export const askChat = (question: string, model: ChatModel = 'qwen2.5:7b', scope: ChatScope = 'private', signal?: AbortSignal) => api.post<ApiResponse<{answer:string;sources:Source[];coverage:Coverage}>>('/chat', { question, model, scope }, { timeout: aiTimeout, signal }).then(r => {
   const result = payload(r.data)
   if (typeof result.answer !== 'string' || !Array.isArray(result.sources)) throw new Error('Câu trả lời nhận được chưa hợp lệ.')
-  return result
+  return { ...result, sources: validateSources(result.sources, scope) }
 })
-export const getChatModels = (signal?: AbortSignal) => api.get<ApiResponse<{id:ChatModel;label:string;configured:boolean}[]>>('/chat/models', { signal }).then(r => payload(r.data))
-export const createReport = (data: {template:string;title:string;instructions:string}, signal?: AbortSignal) => api.post<ApiResponse<{content:string;sources:Source[]}>>('/report', data, { timeout: aiTimeout, signal }).then(r => payload(r.data))
+export const getChatModels = (signal?: AbortSignal) => api.get<ApiResponse<{id:ChatModel;label:string;configured:boolean;ready?:boolean;reason?:string;message?:string}[]>>('/chat/models', { signal }).then(r => payload(r.data))
+export const createReport = (data: {template:string;title:string;instructions:string;model?:'qwen2.5:7b'|'llama3.1:70b';document_ids?:string[];sections?:string[]}, signal?: AbortSignal) => api.post<ApiResponse<import('../types').ReportResult>>('/report', data, { timeout: aiTimeout, signal }).then(r => { const result = payload(r.data); return { ...result, sources: validateSources(result.sources, 'private') } })
 
-export const getDocumentContent = (id: string, params: { offset?: number; limit?: number; chunk?: number; page?: number; scope?: Scope; version?: string; digest?: string } = {}, signal?: AbortSignal) => api.get<ApiResponse<import('../types').DocumentContent>>(`/documents/${encodeURIComponent(id)}/content`, { params, signal }).then(r => payload(r.data))
+export const getDocumentContent = (id: string, params: { offset?: number; limit?: number; chunk?: number; page?: number; scope?: Scope; version?: string; digest?: string } = {}, signal?: AbortSignal) => api.get<ApiResponse<import('../types').DocumentContent>>(`/documents/${encodeURIComponent(id)}/content`, { params, signal }).then(r => { const result = payload(r.data); if (result.scope !== (params.scope || 'private')) throw new ScopeViolation(); return result })
 export const documentFileUrl = (id: string, page?: number | null, scope: Scope = 'private') => `${api.defaults.baseURL?.replace(/\/$/, '')}/documents/${encodeURIComponent(id)}/file?scope=${scope}${page != null ? `#page=${page}` : ''}`
 export const getUploadLimits = (signal?: AbortSignal) => api.get<ApiResponse<{ max_file_mb: number; max_request_mb: number; max_files: number }>>('/documents/upload-limits', { signal }).then(r => payload(r.data))
-export const getDocumentPage = (offset = 0, limit = 50, scope: Scope = 'private', signal?: AbortSignal) => api.get<ApiResponse<{ items: Document[]; total: number; offset: number; limit: number }>>('/documents/paged', { params: { offset, limit, scope }, signal }).then(r => payload(r.data))
+export const getDocumentPage = (offset = 0, limit = 50, scope: Scope = 'private', signal?: AbortSignal, search = '') => api.get<ApiResponse<{ items: Document[]; total: number; offset: number; limit: number }>>('/documents/paged', { params: { offset, limit, scope, ...(search ? { q:search } : {}) }, signal }).then(r => { const result = payload(r.data); if (!Array.isArray(result.items) || result.items.some(item => item.scope !== scope)) throw new ScopeViolation(); return result })
+
+export const getAccessSession = (signal?: AbortSignal) => api.get<ApiResponse<{private_access:boolean;private_configured:boolean}>>('/auth/session', { signal }).then(r => payload(r.data))
+export const loginPrivate = (token: string) => api.post('/auth/login', { token })
+export const logoutPrivate = () => api.post('/auth/logout')

@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import get_settings
 from app.rag.contextual import retrieval_text
+from app.rag.diversity import mmr_pool
 from app.services.model_provider import assert_public_sources
 
 
@@ -45,14 +46,15 @@ def _cross_encoder(model: str, device: str, max_length: int):
 _encoder_lock = RLock()
 
 
-def rerank(query: str, candidates: list[dict], *, enabled: bool = True, model: str | None = None, llm=None) -> list[dict]:
+def rerank(query: str, candidates: list[dict], *, enabled: bool = True, model: str | None = None, llm=None, diversify: bool = True, candidate_limit: int | None = None) -> list[dict]:
     settings = get_settings()
     if model == "openai":
         assert_public_sources(candidates)
     if not enabled or settings.rerank_backend == "off" or not candidates:
         return candidates
-    pool = candidates[:settings.rerank_candidates]
     try:
+        pool_limit = settings.rerank_candidates if candidate_limit is None else min(settings.rerank_candidates, max(1, candidate_limit))
+        pool = mmr_pool(candidates, pool_limit, settings.rerank_diversity_lambda) if diversify else candidates[:pool_limit]
         if settings.rerank_backend == "ollama" or model == "openai":
             llm = llm or ChatOllama(model=settings.rerank_model or model or settings.llm_model,
                              base_url=settings.ollama_base_url, temperature=0,
@@ -90,5 +92,5 @@ def rerank(query: str, candidates: list[dict], *, enabled: bool = True, model: s
         # Stable ties retain RRF order. Scores from different backends have different scales.
         return sorted(ranked, key=lambda item: -item["rerank_score"])
     except Exception as exc:
-        logger.warning("Reranking failed; using hybrid order: {}", exc)
+        logger.warning("Reranking failed; using hybrid order type={}", type(exc).__name__)
         return [{**item, "rerank_method": "hybrid_fallback"} for item in candidates]

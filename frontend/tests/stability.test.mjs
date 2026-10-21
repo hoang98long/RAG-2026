@@ -56,3 +56,35 @@ test('4xx and cancelled read requests do not retry; transient failure retries at
   assert.equal(retryRead(0,new axios.AxiosError('network')),true)
   assert.equal(retryRead(1,new axios.AxiosError('network')),false)
 })
+
+const { validateSources } = await moduleFrom('../src/utils/scope.ts')
+const sourcesCode = ts.transpileModule(readFileSync(new URL('../src/utils/sources.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText
+const sourcesModuleUrl = `data:text/javascript;base64,${Buffer.from(sourcesCode).toString('base64')}`
+const linksCode = ts.transpileModule(readFileSync(new URL('../src/utils/answerLinks.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText.replace("from './sources'", `from '${sourcesModuleUrl}'`)
+const { allowedAnswerLink } = await import(`data:text/javascript;base64,${Buffer.from(linksCode).toString('base64')}`)
+
+test('public source decoder rejects private, missing-scope and malformed passages', () => {
+  const publicSource = { scope: 'public', document: 'P.pdf', content: 'Public fact' }
+  assert.deepEqual(validateSources([publicSource], 'public'), [publicSource])
+  for (const invalid of [[{ ...publicSource, scope: 'private' }], [{ ...publicSource, scope: undefined }], [null], null]) {
+    assert.throws(() => validateSources(invalid, 'public'))
+  }
+  assert.equal(validateSources([{ ...publicSource, scope: 'private' }, publicSource], 'all').length, 2)
+})
+
+test('generated answer links only open a matching source on the application origin', () => {
+  const origin = 'https://documents.example'
+  const sources = [{ scope: 'public', document_id: 'p', chunk_index: 0 }]
+  assert.equal(allowedAnswerLink('/documents/p?chunk=0&scope=public', sources, origin), origin+'/documents/p?chunk=0&scope=public')
+  for (const url of ['/documents/secret?scope=private', '/documents/p?chunk=0&scope=private', 'https://evil.example/collect', 'javascript:alert(1)', '//evil.example/documents/p', '/documents/p?chunk=0&scope=public&secret=extra']) {
+    assert.equal(allowedAnswerLink(url, sources, origin), undefined)
+  }
+})
+
+test('rate limit messages include a bounded retry delay', () => {
+  const error = new axios.AxiosError('rate limited')
+  error.response = { status:429, data:{ detail:'Máy chủ đang bận.' }, headers:{ 'retry-after':'12' } }
+  assert.match(errorMessage(error), /12/)
+  error.response.headers['retry-after'] = 'not-a-number'
+  assert.equal(errorMessage(error), 'Máy chủ đang bận.')
+})

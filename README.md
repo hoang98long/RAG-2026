@@ -15,6 +15,12 @@ Backend chặn OpenAI với `scope=private/all` trước retrieval; không fallb
 
 Chi tiết cách triển khai, ranh giới bảo mật và giới hạn: [PUBLIC_PRIVATE_RAG.md](docs/PUBLIC_PRIVATE_RAG.md).
 
+## Quyền truy cập khi phục vụ người dùng bên ngoài
+
+Chưa đăng nhập chỉ xem/hỏi public. Private/all, upload, xóa và báo cáo cần khóa `INTERNAL_ACCESS_TOKEN` trong `.env` backend (hoặc `.env` gốc khi chạy Compose). Khóa để trống thì các chức năng này bị khóa. Dùng nút **Đăng nhập nội bộ**; khóa không được lưu trong storage trình duyệt. Production cần HTTPS, `SESSION_COOKIE_SECURE=true`, `CORS_ORIGINS` đúng tên miền. Xem [cấu hình quyền và triển khai](docs/PUBLIC_PRIVATE_RAG.md#truy-cập-từ-bên-ngoài-quyền-public-và-quyền-nội-bộ).
+
+Frontend mặc định dùng `/api` cùng origin: Vite proxy khi phát triển, Nginx proxy khi chạy Docker. Các cổng backend/Ollama/Chroma chỉ bind loopback; service Chroma cũ chuyển sang profile tùy chọn vì backend dùng Chroma nhúng. Giữ nguyên volumes và không ingest lại nếu đã dùng v5.
+
 ## Pipeline chat v5
 
 ```text
@@ -29,12 +35,19 @@ Câu hỏi  → câu gốc + diễn đạt lại/tách điều kiện → dense 
 - Chunk và overlap tính bằng **ký tự Unicode**, không phải token. Không cắt xuyên trang hoặc khối mục; PDF vẫn có thể bị trích sai khi là scan, bảng/hai cột.
 - Planner giữ câu gốc, tối đa 3 truy vấn diễn đạt lại và 2 truy vấn bổ sung. Planner lỗi giữ retrieval gốc. Có thể nối bằng chứng của nhiều tài liệu trong kho được phép.
 - Bổ sung đoạn lân cận; câu hỏi danh sách/toàn bộ mở rộng mục của nguồn và theo tham chiếu phụ lục trong cùng tệp qua các trang. “Phụ lục I/01” có khóa chuẩn hóa chung. Mục con có thể vẫn làm tách phạm vi phụ lục; không bảo đảm parser nhận diện mọi cấu trúc.
-- **Hai nguồn/tài liệu là giới hạn hiển thị trong chat**, không chặn lượng bằng chứng dùng trả lời. Link ưu tiên các đoạn thực sự được câu trả lời dẫn. Với danh sách dài, chúng là các link đại diện, không hiển thị toàn bộ bằng chứng. API retrieval baseline và chức năng báo cáo cũ vẫn dùng TOP_K/2 đoạn.
-- Kiểm tra mã nguồn, thêm reviewer đối chiếu kết luận với đoạn được dẫn; sửa tối đa một lần, từ chối trả lời nếu vẫn sai hoặc không kiểm chứng được. Reviewer vẫn có thể sai; chưa thay cho đánh giá thủ công.
+- **Hai nguồn/tài liệu là giới hạn hiển thị trong chat**, không chặn lượng bằng chứng dùng trả lời. Link ưu tiên các đoạn thực sự được câu trả lời dẫn. Với danh sách dài, chúng là các link đại diện, không hiển thị toàn bộ bằng chứng. API retrieval baseline vẫn dùng TOP_K/2 đoạn; báo cáo truy xuất và kiểm chứng theo từng mục, với hai nguồn đại diện mỗi tài liệu khi hiển thị.
+- Kiểm tra record metadata và tệp gốc của đúng kho trước khi dùng đoạn ứng viên; loại nguồn còn sót do upload lỗi, tệp đã mất hoặc đường dẫn sai kho. Không quét toàn bộ danh mục và không tự xóa dữ liệu.
+- Ưu tiên phụ lục được hỏi/tham chiếu trước phần mở rộng mục chung. Coverage ghi số đoạn thực sự giữ trong ngữ cảnh và cảnh báo khi thiếu phụ lục, kể cả câu hỏi không yêu cầu liệt kê toàn bộ.
+- Kiểm tra mã nguồn, thêm reviewer đối chiếu từng dòng kết luận với đoạn được dẫn và trích đoạn nguyên văn; sửa tối đa một lần, từ chối trả lời nếu vẫn sai hoặc không kiểm chứng được. Reviewer vẫn có thể sai; chưa thay cho đánh giá thủ công.
+- MMR chọn pool trước rerank để hạn chế đoạn gần trùng; nội dung mở rộng lấy luân phiên giữa các tài liệu/mục cùng mức ưu tiên. CLI có `--no-diversity` và `complete_evidence_rate` để đo đối chứng; xem [nghiên cứu thuật toán](docs/RAG_ACCURACY.md#rà-soát-thuật-toán-mmr-và-phân-bổ-ngữ-cảnh).
 - Khi chưa đọc hết phạm vi/ngữ cảnh bị cắt, `coverage` và giao diện báo kết quả có thể thiếu. Không trình bày đầu ra bị model cắt như một danh sách hoàn chỉnh.
 - Mã `[S1]`, `[S1, S2]` được ẩn trong câu trả lời hiển thị. Nguồn vẫn có tên tệp/trang/đoạn và link mở đúng phần. Link chứa kho, version và hash nội dung; trả 409 nếu đã reindex/đổi đoạn, tránh mở nhầm nguồn cũ. PDF gốc mở qua `#page=`; đây là thứ tự trang trong tệp, không phải số trang in trên giấy.
 
 Những cải thiện này dựa trên các vấn đề trong `note.docx`. Chưa có benchmark trên bộ tài liệu/câu hỏi thực tế của người dùng, nên chưa có tỷ lệ cải thiện accuracy. Nghiên cứu nền: [RAG_ACCURACY.md](docs/RAG_ACCURACY.md).
+
+## Triển khai thử nghiệm
+
+Làm theo [PILOT_DEPLOYMENT.md](docs/PILOT_DEPLOYMENT.md) để cấu hình quyền, kiểm tra trước triển khai, nghiệm thu public/private, đo chất lượng và chuẩn bị rollback. Có thêm `/ready`, trạng thái model thực tế và `python -m app.preflight --scope all` để phát hiện vấn đề cấu hình/lưu trữ mà không tự sửa dữ liệu.
 
 ## Chạy cục bộ
 
@@ -44,22 +57,22 @@ Tại thư mục backend, giữ `.env` đã có; chỉ tạo mẫu cho máy mớ
 ollama pull qwen2.5:7b
 ollama pull qwen3-embedding:0.6b
 # Chỉ cần khi chọn Llama, máy phải có đủ RAM/VRAM:
-ollama pull llama3.1:70b
+# ollama pull llama3.1:70b
 cd backend
 if (-not (Test-Path -LiteralPath '.env')) { Copy-Item .env.example .env }
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-# Sau khi backup, dừng API và chuyển dữ liệu cũ sang pipeline v5:
-python -m app.reindex --scope private
+# Chỉ migration v4 → v5 / đổi embedding hoặc chunking, sau backup và dừng API:
+# python -m app.reindex --scope private
 # Chỉ khi kho public đã có tài liệu cần chuyển pipeline:
-python -m app.reindex --scope public
+# python -m app.reindex --scope public
 uvicorn app.main:app --reload
 ```
 
 Nếu dùng môi trường có sẵn, thay `.venv` bằng `venv`. Chạy backend tại thư mục `backend` để đường dẫn tương đối đúng. `.env.example` chỉ là mẫu, ứng dụng đọc `.env`. Điền key và khởi động lại backend để bật OpenAI; không đặt key vào biến `VITE_*`.
 
-Terminal frontend: `cd frontend`, `npm install`, `npm run dev`. Frontend `http://localhost:5173`; Swagger `http://localhost:8000/docs`.
+Terminal frontend: `cd frontend`, `npm ci`, `npm run dev`. Frontend `http://localhost:5173`; Swagger `http://localhost:8000/docs`.
 
 ## Docker
 
@@ -67,12 +80,14 @@ Terminal frontend: `cd frontend`, `npm install`, `npm run dev`. Frontend `http:/
 docker compose up -d --build
 docker compose exec ollama ollama pull qwen2.5:7b
 docker compose exec ollama ollama pull qwen3-embedding:0.6b
-docker compose stop backend
-docker compose run --rm backend python -m app.reindex --scope private
-docker compose up -d backend
+# Không reindex khi cập nhật thông thường; xem quy trình migration bên dưới.
 ```
 
 Giao diện `http://localhost:3000`. Compose giữ volume private cũ, thêm `public_chroma_data`; DB/upload public ở `/app/storage/public` trong volume `uploads`. Key/cấu hình Compose dùng `.env` gốc. Không đổi project/volume và không dùng `docker compose down -v` khi cập nhật. Chưa cấu hình GPU passthrough. Backend dùng Chroma nhúng, không gọi dịch vụ Chroma riêng trong Compose. Cross-encoder không nằm trong image mặc định, nếu bật cần cài dependency của nó.
+
+## Tổng hợp và viết báo cáo
+
+Báo cáo dùng dàn ý tối đa 4 mục, truy xuất riêng từng mục và kiểm chứng bằng chứng trước khi ghép bài. Có thể chọn Qwen/Llama, chọn tối đa 20 tài liệu nội bộ và nhập dàn ý riêng. Giao diện báo phần còn thiếu, giữ yêu cầu khi lỗi và xuất Markdown không hiện mã S trong prose. Chi tiết phương pháp, nghiên cứu đã đối chiếu và giới hạn: [REPORT_RAG.md](docs/REPORT_RAG.md). Nâng cấp này giữ chỉ mục v5, không cần reindex.
 
 ## Cấu hình chính
 
@@ -85,14 +100,18 @@ Giữ nguyên `DATABASE_URL`, `CHROMA_DIR`, `UPLOAD_DIR` trên máy đã ingest.
 | `PUBLIC_DATABASE_URL` | `sqlite:///./storage/public/public.db` | DB public riêng |
 | `PUBLIC_CHROMA_DIR`, `PUBLIC_UPLOAD_DIR` | `./public_chroma_data`, `./storage/public/uploads` | Index và tệp public |
 | `OPENAI_API_KEY` | trống | Chỉ backend đọc key |
+| `INTERNAL_ACCESS_TOKEN` | trống | Khóa ngẫu nhiên 32–512 ký tự để mở quyền nội bộ |
+| `SESSION_COOKIE_SECURE`, `SESSION_MAX_AGE` | `false`, `14400` | Đặt secure=true khi triển khai HTTPS |
+| `PUBLIC_CHAT_RATE_LIMIT`, `PUBLIC_CHAT_MAX_CONCURRENT` | `20`, `2` | Hạn mức/phút/IP và số câu xử lý đồng thời khi chưa đăng nhập |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Model cho lựa chọn OpenAI |
 | `OPENAI_TIMEOUT` | `90` | Timeout giây mỗi request API |
 | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Embedding qua Ollama cho hai kho riêng |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | `1600`, `240` | Ký tự Unicode |
-| `TOP_K` | `6` | Baseline và số lượng anchor trong chat mở rộng |
+| `TOP_K` | `6` | Baseline; chat mở rộng tối đa 2 × TOP_K anchor |
 | `RETRIEVAL_CANDIDATES` | `48` | Ứng viên mỗi nhánh/truy vấn |
 | `RERANK_BACKEND` | `ollama` | `off`, `ollama`, `cross_encoder`; OpenAI dùng public grader khi bật rerank |
 | `RERANK_CANDIDATES`, `RERANK_BATCH_SIZE` | `32`, `6` | Phạm vi/batch rerank |
+| `RERANK_DIVERSITY_LAMBDA` | `0.75` | MMR trước rerank; 1 giữ top pool cũ |
 | `RERANK_MIN_GRADE`, `RERANK_TIMEOUT` | `2`, `120` | Grade 0–3; timeout mỗi batch Ollama |
 | `QUERY_EXPANSION`, `GROUNDING_VERIFICATION` | `true`, `true` | Diễn đạt lại/truy xuất bổ sung và reviewer |
 | `NEIGHBOR_CHUNKS` | `1` | Số đoạn lân cận mỗi phía |
@@ -119,7 +138,7 @@ PDF đọc từng trang, DOCX theo đoạn/hàng XML, embedding theo batch. FTS5
 
 ## API
 
-API nghiệp vụ trả `{ success, message, data }`. Endpoint tài liệu nhận query `scope=private|public`, mặc định private.
+API nghiệp vụ trả `{ success, message, data }`. Endpoint tài liệu nhận query `scope=private|public`, mặc định private (cần quyền nội bộ); client public phải gửi `scope=public`.
 
 | Method | Endpoint | Chức năng |
 | --- | --- | --- |
@@ -146,7 +165,7 @@ Chat trả `answer`, `sources`, `model`, `scope`, `coverage`. Đổi mô hình/k
 
 ```powershell
 cd backend
-python -m unittest discover -s tests -v
+python tests/run_isolated.py
 python -m app.evaluate questions.jsonl --scope private --hybrid-only --output evaluation/hybrid.json
 python -m app.evaluate questions.jsonl --scope public --output evaluation/public.json
 # Planner + section expansion, do full evidence retrieval with a local model:

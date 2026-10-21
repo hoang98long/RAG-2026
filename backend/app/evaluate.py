@@ -6,6 +6,8 @@ import statistics
 import time
 from pathlib import Path
 from app.core.config import get_settings
+from app.core.database import SessionLocal, public_session_factory
+from app.services.source_catalogue import CataloguedStore
 from app.rag.vector_store import get_vector_store
 from app.rag.evidence import retrieve_evidence
 from app.services.rag_service import _llm
@@ -40,12 +42,12 @@ def matches(source: dict, label: dict) -> bool:
 
 def retrieval_metrics(sources: list[dict], labels: list[dict]) -> dict:
     if not labels:
-        return {'recall': None, 'precision': None, 'reciprocal_rank': None, 'correct_abstention': not sources}
+        return {'recall': None, 'precision': None, 'reciprocal_rank': None, 'correct_abstention': not sources, 'complete_evidence': None}
     hits = [any(matches(source, label) for label in labels) for source in sources]
     recall = sum(any(matches(source, label) for source in sources) for label in labels) / len(labels)
     return {'recall': recall, 'precision': sum(hits) / len(hits) if hits else 0,
             'reciprocal_rank': next((1 / rank for rank, hit in enumerate(hits, 1) if hit), 0),
-            'correct_abstention': None}
+            'correct_abstention': None, 'complete_evidence': recall == 1}
 
 
 def main() -> None:
@@ -54,6 +56,7 @@ def main() -> None:
     parser.add_argument('--expanded', action='store_true', help='Evaluate full chat evidence including query planning and section expansion; does not generate an answer')
     parser.add_argument('--model', choices=['qwen2.5:7b', 'llama3.1:70b'], default='qwen2.5:7b')
     parser.add_argument('--scope', choices=['private', 'public'], default='private')
+    parser.add_argument('--no-diversity', action='store_true', help='Disable MMR preselection and fair section interleaving for an ablation run')
     parser.add_argument('--hybrid-only', action='store_true', help='Disable reranking for an ablation run')
     parser.add_argument('--output', type=Path, help='Write all case results and configuration as JSON')
     args = parser.parse_args()
@@ -67,38 +70,41 @@ def main() -> None:
     store = get_vector_store() if args.scope == "private" else get_vector_store("public")
     settings = get_settings()
     results = []
-    for case, expected in zip(cases, labels):
-        start = time.perf_counter()
-        coverage = None
-        if args.expanded:
-            result = retrieve_evidence(case['question'], [store], _llm(args.model, args.scope), args.model,
-                                       use_rerank=not args.hybrid_only)
-            sources, coverage = result.evidence, result.coverage
-        else:
-            sources = store.search(case['question'], settings.top_k, use_rerank=not args.hybrid_only)
-        elapsed = time.perf_counter() - start
-        result = {'question': case['question'], 'expected_sources': expected,
-                  'sources': sources, 'coverage': coverage, 'seconds': elapsed, **retrieval_metrics(sources, expected)}
-        results.append(result)
-        print(json.dumps({key: value for key, value in result.items() if key != 'sources'}, ensure_ascii=False))
+    with (SessionLocal() if args.scope == 'private' else public_session_factory()()) as db:
+        checked = CataloguedStore(store, db, args.scope)
+        for case, expected in zip(cases, labels):
+            start = time.perf_counter()
+            coverage = None
+            if args.expanded:
+                result = retrieve_evidence(case['question'], [checked], _llm(args.model, args.scope), args.model,
+                                           use_rerank=not args.hybrid_only, use_diversity=not args.no_diversity)
+                sources, coverage = result.evidence, result.coverage
+            else:
+                sources = checked.search(case['question'], settings.top_k, use_rerank=not args.hybrid_only, use_diversity=not args.no_diversity)
+            elapsed = time.perf_counter() - start
+            result = {'question': case['question'], 'expected_sources': expected,
+                      'sources': sources, 'coverage': coverage, 'seconds': elapsed, **retrieval_metrics(sources, expected)}
+            results.append(result)
+            print(json.dumps({key: value for key, value in result.items() if key != 'sources'}, ensure_ascii=False))
     positive = [result for result in results if result['recall'] is not None]
     negative = [result for result in results if result['correct_abstention'] is not None]
     times = sorted(result['seconds'] for result in results)
     summary = {'cases': len(cases), 'answerable_cases': len(positive), 'unanswerable_cases': len(negative),
                'recall_at_k': statistics.mean(result['recall'] for result in positive) if positive else None,
                'precision_returned': statistics.mean(result['precision'] for result in positive) if positive else None,
+               'complete_evidence_rate': statistics.mean(result['complete_evidence'] for result in positive) if positive else None,
                'mrr': statistics.mean(result['reciprocal_rank'] for result in positive) if positive else None,
                'retrieval_abstention_accuracy': statistics.mean(result['correct_abstention'] for result in negative) if negative else None,
                'mean_seconds': statistics.mean(times), 'p95_seconds': times[math.ceil(0.95 * len(times)) - 1],
                'fallback_cases': sum(any(source.get('rerank_method') == 'hybrid_fallback' for source in result['sources']) for result in results)}
     configuration = {key: getattr(settings, key) for key in ('llm_model', 'embedding_model', 'chunk_size', 'chunk_overlap',
                     'top_k', 'retrieval_candidates', 'max_context_chars', 'min_similarity', 'rerank_backend',
-                    'rerank_model', 'rerank_candidates', 'rerank_min_grade', 'rerank_batch_size', 'llm_num_ctx',
+                    'rerank_model', 'rerank_candidates', 'rerank_diversity_lambda', 'rerank_min_grade', 'rerank_batch_size', 'llm_num_ctx',
                     'embedding_query_instruction', 'cross_encoder_model', 'cross_encoder_device',
                     'cross_encoder_max_length', 'cross_encoder_min_score')}
     configuration.update({'scope': args.scope, 'expanded': args.expanded, 'selected_model': args.model if args.expanded else settings.llm_model,
-                          'evaluation_target': 'full_evidence' if args.expanded else 'baseline_sources',
-                          'collection': store.collection.name, 'hybrid_only': args.hybrid_only, 'max_sources_per_document': None if args.expanded else 2})
+                          'diversity_enabled': not args.no_diversity, 'evaluation_target': 'full_evidence' if args.expanded else 'baseline_sources',
+                          'catalogue_validated': True, 'collection': store.collection.name, 'hybrid_only': args.hybrid_only, 'max_sources_per_document': None if args.expanded else 2})
     report = {'configuration': configuration, 'summary': summary, 'results': results}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

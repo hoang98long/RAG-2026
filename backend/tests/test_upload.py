@@ -5,10 +5,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
+from auth_helpers import internal_client
 from langchain_core.documents import Document
 from pypdf import PdfWriter
 from app.core.config import Settings
-from app.core.database import get_db
+from app.core.database import get_scope_db
 from app.main import app
 from app.services.document_service import upload_files
 
@@ -30,17 +31,17 @@ class UploadTests(unittest.TestCase):
         return output.getvalue()
 
     def check_rejected_pdf(self, data, expected):
-        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_scope_db] = lambda: self.db
         try:
             with patch('app.services.document_service.get_settings', return_value=self.settings), \
                  patch('app.services.document_service.get_vector_store') as store:
-                response = TestClient(app).post('/documents/upload', files={'files': ('56-bqp.pdf', data, 'application/pdf')})
+                response = internal_client(self, app).post('/documents/upload', files={'files': ('56-bqp.pdf', data, 'application/pdf')})
                 self.assertEqual(response.status_code, 400)
                 self.assertIn(expected, response.json()['detail'])
                 self.assertIn('56-bqp.pdf', response.json()['detail'])
                 store.assert_not_called()
         finally:
-            app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(get_scope_db, None)
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])

@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
-from fastapi import Depends, Query
+from fastapi import Query, Request
+from app.core.access import require_private_access
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -34,9 +35,15 @@ def public_session_factory():
     return sessionmaker(bind=public_engine, autoflush=False, autocommit=False)
 
 
-def get_scope_db(scope: Literal['private', 'public'] = Query('private'), db=Depends(get_db)):
+def get_scope_db(request: Request, scope: Literal['private', 'public'] = Query('private')):
     if scope == 'private':
-        yield db
+        require_private_access(request)
+        yield from get_db()
     else:
         with public_session_factory()() as public_db:
             yield public_db
+
+
+def get_private_db(request: Request):
+    require_private_access(request)
+    yield from get_db()

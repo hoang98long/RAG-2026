@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from auth_helpers import internal_client
 from langchain_core.documents import Document as Chunk
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import create_engine, select
@@ -53,7 +54,7 @@ class IsolationTests(unittest.TestCase):
         app.dependency_overrides[get_db] = private_db
         app.dependency_overrides[get_scope_db] = scoped_db
         self.addCleanup(app.dependency_overrides.clear)
-        self.client = TestClient(app)
+        self.client = internal_client(self, app)
 
     def test_storage_configuration_rejects_shared_db_or_directories(self):
         for values in [{'public_database_url': self.settings.database_url},
@@ -193,7 +194,8 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(sources[0]['source_id'],'S3')
 
     def test_model_list_reveals_readiness_without_key(self):
-        with patch('app.api.routes.get_settings',return_value=self.settings):
+        with patch('app.api.routes.get_settings',return_value=self.settings), \
+             patch('app.services.readiness._read_inventory',return_value=frozenset()):
             response=self.client.get('/chat/models')
         self.assertEqual(response.status_code,200)
         self.assertNotIn('test-key-not-a-secret',response.text)

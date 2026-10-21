@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from auth_helpers import internal_client
 from langchain_core.documents import Document as Chunk
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -34,7 +35,7 @@ class UploadRetryTests(unittest.TestCase):
             with self.factories[scope]() as db:yield db
         app.dependency_overrides[get_scope_db]=scoped
         self.addCleanup(app.dependency_overrides.clear)
-        self.client=TestClient(app)
+        self.client=internal_client(self, app)
         self.stores={'private':MagicMock(),'public':MagicMock()}
         for store in self.stores.values():
             store.add.side_effect=lambda identifier,filename,chunks:len(list(chunks))

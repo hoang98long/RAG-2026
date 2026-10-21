@@ -69,16 +69,19 @@ INSERT OR IGNORE INTO state VALUES ('dirty', 0);
 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chunk_id) DO UPDATE SET document_id=excluded.document_id,
 chunk_index=excluded.chunk_index, content=excluded.content, metadata=excluded.metadata, search_text=excluded.search_text''', rows)
 
-    def search(self, query: str, limit: int) -> list[str]:
+    def search(self, query: str, limit: int, *, document_ids: list[str] | None = None) -> list[str]:
+        if document_ids == []:
+            return []
         # Quote tokens rather than accepting raw FTS syntax from the question.
         terms = list(dict.fromkeys(tokenize(query)))[:128]
         if not terms:
             return []
         expression = ' OR '.join('"' + term.replace('"', '""') + '"' for term in terms)
+        restriction = '' if document_ids is None else ' AND chunks.document_id IN (' + ','.join('?' for _ in document_ids) + ')'
         with self.connect() as db:
-            return [row[0] for row in db.execute('''SELECT chunks.chunk_id FROM chunks_fts
-JOIN chunks ON chunks.rowid=chunks_fts.rowid WHERE chunks_fts MATCH ?
-ORDER BY bm25(chunks_fts), chunks.chunk_id LIMIT ?''', (expression, limit))]
+            return [row[0] for row in db.execute('SELECT chunks.chunk_id FROM chunks_fts '
+                'JOIN chunks ON chunks.rowid=chunks_fts.rowid WHERE chunks_fts MATCH ?' + restriction +
+                ' ORDER BY bm25(chunks_fts), chunks.chunk_id LIMIT ?', [expression, *(document_ids or []), limit])]
 
     def get(self, ids: list[str]) -> dict[str, tuple[str, dict]]:
         if not ids:

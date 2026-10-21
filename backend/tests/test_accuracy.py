@@ -134,6 +134,7 @@ class AccuracyTests(unittest.TestCase):
             store.collection.name = 'test_collection'
             store.search.side_effect = [[{'document': 'A.pdf', 'page': 2}], []]
             with patch('app.evaluate.get_vector_store', return_value=store), \
+                 patch('app.evaluate.SessionLocal'), patch('app.evaluate.CataloguedStore', return_value=store), \
                  patch('sys.argv', ['evaluate', str(dataset), '--hybrid-only', '--output', str(output)]), \
                  redirect_stdout(io.StringIO()):
                 main()
@@ -143,7 +144,7 @@ class AccuracyTests(unittest.TestCase):
         self.assertEqual(report['summary']['retrieval_abstention_accuracy'], 1)
         self.assertEqual(report['configuration']['collection'], 'test_collection')
         self.assertTrue(report['configuration']['hybrid_only'])
-        self.assertEqual(store.search.call_args_list[0].kwargs, {'use_rerank': False})
+        self.assertEqual(store.search.call_args_list[0].kwargs, {'use_rerank': False, 'use_diversity': True})
 
     def test_evaluation_distinguishes_wrong_page_from_correct_document(self):
         sources = [{'document': 'A.pdf', 'page': 1, 'chunk_index': 0}]

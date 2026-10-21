@@ -144,6 +144,7 @@ class EvidenceTests(unittest.TestCase):
             store.collection.name='test_v5'
             result=EvidenceResult([{'document':'A.pdf','chunk_index':63}],[],{'evidence_chunks':1})
             with patch('app.evaluate.get_vector_store',return_value=store), \
+                 patch('app.evaluate.public_session_factory'), \
                  patch('app.evaluate._llm'), patch('app.evaluate.retrieve_evidence',return_value=result) as retrieval, \
                  patch('sys.argv',['evaluate',str(dataset),'--expanded','--scope','public','--hybrid-only','--output',str(output)]), \
                  redirect_stdout(io.StringIO()):

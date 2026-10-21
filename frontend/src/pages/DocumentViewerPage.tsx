@@ -31,7 +31,7 @@ function Reader({ documentId, location }: { documentId: string; location: Extrac
     const frame = requestAnimationFrame(() => { target.current?.scrollIntoView({ block: 'center' }); target.current?.focus({ preventScroll: true }) })
     return () => cancelAnimationFrame(frame)
   }, [data])
-  return <section className="card flex h-[calc(100dvh-14rem)] min-h-[320px] flex-col overflow-hidden md:h-[calc(100dvh-4rem)]">
+  return <section className="card document-reader">
     <header className="shrink-0 border-b p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="flex min-w-0 items-center gap-2 text-lg font-bold"><FileText className="shrink-0" size={20} /><span className="break-all">{data?.filename || 'Tài liệu nguồn'}</span></h1>
         {data && <a className="btn" href={documentFileUrl(documentId, targetChunk?.page || page, scope)} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} />{data.file_type === 'pdf' ? `Mở PDF gốc${targetChunk?.page ? ` · Trang ${targetChunk.page}` : ''}` : 'Tải bản DOCX gốc'}</a>}

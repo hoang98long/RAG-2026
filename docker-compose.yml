@@ -1,13 +1,25 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   ollama:
+    logging: *default-logging
+    restart: unless-stopped
     image: ollama/ollama:latest
     volumes: [ollama_data:/root/.ollama]
-    ports: ["11434:11434"]
+    ports: ["127.0.0.1:11434:11434"]
   chroma:
+    profiles: ["legacy-chroma"]
     image: chromadb/chroma:latest
     volumes: [chroma_data:/chroma/chroma]
-    ports: ["8001:8000"]
+    ports: ["127.0.0.1:8001:8000"]
   backend:
+    logging: *default-logging
+    restart: unless-stopped
+    stop_grace_period: 10m
     build: ./backend
     environment:
       DATABASE_URL: sqlite:////app/storage/rag.db
@@ -26,6 +38,7 @@ services:
       RERANK_BACKEND: ${RERANK_BACKEND:-ollama}
       RERANK_MODEL: ${RERANK_MODEL:-}
       RERANK_CANDIDATES: ${RERANK_CANDIDATES:-32}
+      RERANK_DIVERSITY_LAMBDA: ${RERANK_DIVERSITY_LAMBDA:-0.75}
       RERANK_BATCH_SIZE: ${RERANK_BATCH_SIZE:-6}
       RERANK_MIN_GRADE: ${RERANK_MIN_GRADE:-2}
       RERANK_TIMEOUT: ${RERANK_TIMEOUT:-120}
@@ -40,12 +53,23 @@ services:
       PUBLIC_DATABASE_URL: sqlite:////app/storage/public/public.db
       PUBLIC_CHROMA_DIR: /app/public_chroma_data
       PUBLIC_UPLOAD_DIR: /app/storage/public/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      INTERNAL_ACCESS_TOKEN: ${INTERNAL_ACCESS_TOKEN:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_MAX_AGE: ${SESSION_MAX_AGE:-14400}
+      PUBLIC_CHAT_RATE_LIMIT: ${PUBLIC_CHAT_RATE_LIMIT:-20}
+      PUBLIC_CHAT_MAX_CONCURRENT: ${PUBLIC_CHAT_MAX_CONCURRENT:-2}
+      FORWARDED_ALLOW_IPS: ${TRUSTED_PROXY_IPS:-*}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-90}
       LLM_TIMEOUT: ${LLM_TIMEOUT:-180}
       EMBEDDING_TIMEOUT: ${EMBEDDING_TIMEOUT:-120}
       REVIEW_BATCH_SIZE: ${REVIEW_BATCH_SIZE:-6}
+      REPORT_CONTEXT_CHARS: ${REPORT_CONTEXT_CHARS:-10000}
+      REPORT_SECTION_CHUNKS: ${REPORT_SECTION_CHUNKS:-8}
+      REPORT_RERANK_CANDIDATES: ${REPORT_RERANK_CANDIDATES:-12}
+      REPORT_MAX_SECONDS: ${REPORT_MAX_SECONDS:-420}
       QUERY_EXPANSION: ${QUERY_EXPANSION:-true}
       GROUNDING_VERIFICATION: ${GROUNDING_VERIFICATION:-true}
       EVIDENCE_MAX_CHUNKS: ${EVIDENCE_MAX_CHUNKS:-80}
@@ -56,12 +80,27 @@ services:
       CHROMA_DIR: /app/chroma_data
       UPLOAD_DIR: /app/storage/uploads
     volumes: [uploads:/app/storage, chroma_data:/app/chroma_data, public_chroma_data:/app/public_chroma_data]
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on: [ollama]
   frontend:
+    logging: *default-logging
+    restart: unless-stopped
     build: ./frontend
     ports: ["3000:80"]
-    depends_on: [backend]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      backend:
+        condition: service_healthy
 volumes:
   public_chroma_data:
   chroma_data:

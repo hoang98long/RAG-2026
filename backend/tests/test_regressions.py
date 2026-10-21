@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import httpx
 from fastapi.testclient import TestClient
+from auth_helpers import internal_client
 from langchain_core.messages import AIMessage
 from ollama import ResponseError
 from pydantic import ValidationError
@@ -115,7 +116,7 @@ class RegressionTests(unittest.TestCase):
     def test_connection_timeout_and_missing_model_are_safe_http_errors(self):
         app.dependency_overrides[get_db]=lambda:MagicMock()
         self.addCleanup(app.dependency_overrides.clear)
-        client=TestClient(app)
+        client=internal_client(self, app)
         for error,status in [(httpx.ReadTimeout('PRIVATE_SECRET'),504),(ConnectionError('PRIVATE_SECRET'),503),
                              (ResponseError('PRIVATE_SECRET',status_code=404),503)]:
             with patch('app.api.routes.answer',side_effect=error):

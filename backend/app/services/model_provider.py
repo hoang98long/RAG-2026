@@ -7,6 +7,8 @@ LOCAL_MODELS = {'qwen2.5:7b', 'llama3.1:70b'}
 
 
 def validate_selection(model: str, scope: str):
+    if scope not in {'private', 'public', 'all'}:
+        raise HTTPException(403, 'Phạm vi tài liệu không hợp lệ')
     if model not in LOCAL_MODELS | {'openai'} or scope not in {'private', 'public', 'all'}:
         raise HTTPException(422, 'Lựa chọn mô hình hoặc kho tài liệu không hợp lệ')
     if model == 'openai':

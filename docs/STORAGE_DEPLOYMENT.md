@@ -91,3 +91,11 @@ Tham khảo: [Git gitignore](https://git-scm.com/docs/gitignore), [Git rm --cach
 ## Kho public từ pipeline v5
 
 Backup thêm `backend/public_chroma_data/` (hoặc volume `public_chroma_data`) và DB/upload tại `backend/storage/public/`. Các mục này được ignore. Dữ liệu private hiện có giữ nguyên đường dẫn; không copy sang public. Chi tiết: [PUBLIC_PRIVATE_RAG.md](PUBLIC_PRIVATE_RAG.md).
+
+## Khi cập nhật bản có quyền truy cập public/nội bộ
+
+Giữ nguyên `.env` của từng máy và bổ sung `INTERNAL_ACCESS_TOKEN` ngẫu nhiên (32–512 ký tự) nếu cần dùng private, upload, xóa hoặc báo cáo. Khóa trống thì chỉ phục vụ public; đây là thay đổi quyền truy cập, không phải mất dữ liệu. Không ghi khóa vào `.env.example` hoặc `VITE_*`. Production dùng HTTPS, `SESSION_COOKIE_SECURE=true`, `CORS_ORIGINS` đúng origin.
+
+Frontend/API cùng origin qua `/api`; backend, Ollama và Chroma cũ chỉ mở port loopback trong Compose. Backend dùng Chroma nhúng, service `chroma` cũ nằm trong profile `legacy-chroma`. Nếu nó đang chạy từ cấu hình cũ, dừng bằng `docker compose stop chroma` trước khi cập nhật service; giữ nguyên project name/volumes và không dùng `down -v`. Không cần reindex chỉ để nhận thay đổi giao diện/quyền truy cập này nếu đã dùng v5.
+
+Chi tiết và giới hạn của khóa quản trị dùng chung/session một process: [PUBLIC_PRIVATE_RAG.md](PUBLIC_PRIVATE_RAG.md#truy-cập-từ-bên-ngoài-quyền-public-và-quyền-nội-bộ).

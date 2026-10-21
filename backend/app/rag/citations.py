@@ -23,4 +23,6 @@ def normalized_text(text: str) -> str:
 
 def quote_support_valid(claim: str, quote: str, answer: str, source: str) -> bool:
     claim, quote = normalized_text(claim), normalized_text(quote)
-    return len(claim) >= 3 and len(quote) >= 3 and claim in normalized_text(answer) and quote in normalized_text(source)
+    numbers = lambda value: set(re.findall(r'(?<!\w)[a-z]*\d+(?:[.,/-]\d+)*[a-z]*(?!\w)', value))
+    return (len(claim) >= 3 and len(quote) >= 3 and claim in normalized_text(answer)
+            and quote in normalized_text(source) and numbers(claim).issubset(numbers(quote)))

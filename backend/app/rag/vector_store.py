@@ -1,5 +1,5 @@
 import hashlib
-import json
+from app.rag.index_version import collection_name
 from app.rag.sections import section_key
 from functools import lru_cache
 from itertools import islice
@@ -24,11 +24,7 @@ class VectorStore:
         self.settings = get_settings()
         self.chroma_dir = self.settings.public_chroma_dir if scope == "public" else self.settings.chroma_dir
         self.client = chromadb.PersistentClient(path=self.chroma_dir)
-        signature = json.dumps({'version': 5, 'embedding': self.settings.embedding_model,
-                                'instruction': self.settings.embedding_query_instruction,
-                                'chunk_size': self.settings.chunk_size,
-                                'chunk_overlap': self.settings.chunk_overlap}, sort_keys=True)
-        name = 'documents_v5_' + hashlib.sha256(signature.encode()).hexdigest()[:16]
+        name = collection_name(self.settings)
         self.collection = self.client.get_or_create_collection(name, metadata={'hnsw:space': 'cosine'})
         self.lexical = LexicalStore(Path(self.chroma_dir) / 'lexical' / f'{name}.sqlite3')
         self.embeddings = OllamaEmbeddings(model=self.settings.embedding_model, base_url=self.settings.ollama_base_url,
@@ -79,7 +75,9 @@ class VectorStore:
             self.lexical.mark_dirty(False)
             return count
 
-    def candidates(self, query: str) -> list[dict]:
+    def candidates(self, query: str, *, document_ids: list[str] | None = None) -> list[dict]:
+        if document_ids == []:
+            return []
         with self._lock:
             count = self.collection.count()
             if not count or not query.strip():
@@ -90,11 +88,12 @@ class VectorStore:
                                if instruction and self.settings.embedding_model.startswith('qwen3-embedding') else query)
             pool = min(self.settings.retrieval_candidates, count)
             result = self.collection.query(query_embeddings=[self.embeddings.embed_query(embedding_query)], n_results=pool,
-                                           include=['distances'])
+                                           include=['distances'], **({'where': {'document_id': {'$in': document_ids}}} if document_ids is not None else {}))
             dense_ids = result['ids'][0]
             similarities = dict(zip(dense_ids, (1 - distance for distance in result['distances'][0])))
             dense_ids = [identifier for identifier in dense_ids if similarities[identifier] >= self.settings.min_similarity]
-            lexical_ids = self.lexical.search(query, pool)
+            lexical_ids = (self.lexical.search(query, pool) if document_ids is None else
+                           self.lexical.search(query, pool, document_ids=document_ids))
             ranking = fuse_rankings(dense_ids, lexical_ids)
             # Only candidate text is read; the corpus is never materialized for a query.
             by_id = self.lexical.get([identifier for identifier, _ in ranking])
@@ -108,8 +107,8 @@ class VectorStore:
         return [{**item, 'scope': self.scope, 'index_version': self.collection.name,
                  'digest': hashlib.sha256(item['content'].encode()).hexdigest()[:16]} for item in candidates]
 
-    def search(self, query: str, limit: int, *, use_rerank: bool = True) -> list[dict]:
-        return select_sources(rerank(query, self.candidates(query), enabled=use_rerank), limit, self.settings.max_context_chars)
+    def search(self, query: str, limit: int, *, use_rerank: bool = True, use_diversity: bool = True) -> list[dict]:
+        return select_sources(rerank(query, self.candidates(query), enabled=use_rerank, diversify=use_diversity), limit, self.settings.max_context_chars)
 
     def expand(self, source: dict, *, whole_section: bool, limit: int) -> tuple[list[dict], int]:
         with self._lock:

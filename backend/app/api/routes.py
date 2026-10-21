@@ -4,10 +4,12 @@ import hashlib
 from fastapi.responses import FileResponse
 from app.rag.vector_store import get_vector_store
 from app.core.config import get_settings
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, Header
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, Header, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.core.database import get_db, get_scope_db
+from app.core.database import get_db, get_scope_db, get_private_db
+from app.core.access import require_private_access
+from app.core.public_limits import public_chat_slot
 from app.models.models import ChatHistory, Document, ReportHistory
 from app.schemas.schemas import ChatRequest, DocumentOut, ReportRequest
 from app.services.document_service import delete_document, upload_files
@@ -26,7 +28,7 @@ def _record(item, scope):
     return {**DocumentOut.model_validate(item).model_dump(mode='json'), 'scope': scope}
 
 
-@router.post('/documents/upload')
+@router.post('/documents/upload', dependencies=[Depends(require_private_access)])
 def upload_documents(files: list[UploadFile] = File(...), scope: Scope = Query('private'), db: Session = Depends(get_scope_db),
                      request_id: str | None = Header(None, alias='Idempotency-Key', max_length=36)):
     records = upload_files(files, db, scope=scope, request_id=request_id)
@@ -34,12 +36,13 @@ def upload_documents(files: list[UploadFile] = File(...), scope: Scope = Query('
 
 
 @router.get('/documents')
-def get_documents(scope: Scope = Query('private'), db: Session = Depends(get_scope_db)):
-    records = db.scalars(select(Document).order_by(Document.upload_time.desc())).all()
+def get_documents(scope: Scope = Query('private'), db: Session = Depends(get_scope_db),
+                  offset: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=200)):
+    records = db.scalars(select(Document).order_by(Document.upload_time.desc(), Document.id).offset(offset).limit(limit)).all()
     return ok([_record(item, scope) for item in records])
 
 
-@router.delete('/documents/{document_id}')
+@router.delete('/documents/{document_id}', dependencies=[Depends(require_private_access)])
 def remove_document(document_id: str, scope: Scope = Query('private'), db: Session = Depends(get_scope_db)):
     document = db.get(Document, document_id)
     if not document:
@@ -48,8 +51,17 @@ def remove_document(document_id: str, scope: Scope = Query('private'), db: Sessi
     return ok(message='Đã xóa tài liệu')
 
 
+def get_chat_db(request: Request, payload: ChatRequest):
+    if payload.scope == 'public':
+        with public_chat_slot(request):
+            yield None
+    else:
+        require_private_access(request)
+        yield from get_db()
+
+
 @router.post('/chat')
-def chat(payload: ChatRequest, db: Session = Depends(get_db)):
+def chat(payload: ChatRequest, db: Session | None = Depends(get_chat_db)):
     result, sources, cached, coverage = answer(payload.question, db, model=payload.model, scope=payload.scope)
     return ok({'answer': result, 'sources': sources, 'cached': cached, 'coverage': coverage,
                'model': payload.model, 'scope': payload.scope})
@@ -57,19 +69,19 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)):
 
 @router.get('/chat/models')
 def chat_models():
-    settings = get_settings()
-    return ok([
-        {'id': 'qwen2.5:7b', 'label': 'Qwen 2.5 · 7B (local)', 'configured': True},
-        {'id': 'llama3.1:70b', 'label': 'Llama 3.1 · 70B (local)', 'configured': True},
-        {'id': 'openai', 'label': f'OpenAI · {settings.openai_model}',
-         'configured': bool(settings.openai_api_key.get_secret_value().strip())},
-    ])
+    from app.services.readiness import model_status
+    models, _ = model_status(get_settings())
+    return ok(models)
 
 
 @router.post('/report')
-def report(payload: ReportRequest, db: Session = Depends(get_db)):
-    content, sources = generate_report(payload.template, payload.title, payload.instructions, db)
-    return ok({'content': content, 'sources': sources}, 'Tạo báo cáo thành công')
+def report(payload: ReportRequest, db: Session = Depends(get_private_db)):
+    result = generate_report(payload.template, payload.title, payload.instructions, db,
+                             model=payload.model, document_ids=payload.document_ids, sections=payload.sections)
+    content, sources = result
+    return ok({'content': content, 'sources': sources, 'sections': getattr(result, 'sections', []),
+               'coverage': getattr(result, 'coverage', {}), 'model': payload.model, 'scope': 'private'},
+              'Đã xử lý yêu cầu báo cáo')
 
 
 @router.get('/dashboard')
@@ -124,7 +136,8 @@ def upload_limits():
 
 @router.get('/documents/paged')
 def document_catalogue(db: Session = Depends(get_scope_db), scope: Scope = Query('private'), offset: int = Query(0, ge=0),
-                       limit: int = Query(50, ge=1, le=200)):
-    total = db.scalar(select(func.count()).select_from(Document)) or 0
-    records = db.scalars(select(Document).order_by(Document.upload_time.desc(), Document.id).offset(offset).limit(limit)).all()
+                       limit: int = Query(50, ge=1, le=200), q: str = Query('', max_length=100)):
+    predicate = Document.filename.contains(q.strip(), autoescape=True) if q.strip() else True
+    total = db.scalar(select(func.count()).select_from(Document).where(predicate)) or 0
+    records = db.scalars(select(Document).where(predicate).order_by(Document.upload_time.desc(), Document.id).offset(offset).limit(limit)).all()
     return ok({'items': [_record(item, scope) for item in records], 'total': total, 'offset': offset, 'limit': limit})

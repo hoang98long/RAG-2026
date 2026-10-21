@@ -11,6 +11,7 @@ class DocumentOut(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
     question: str = Field(min_length=1, max_length=12000)
     model: Literal['qwen2.5:7b', 'llama3.1:70b', 'openai'] = 'qwen2.5:7b'
     scope: Literal['private', 'public', 'all'] = 'private'
@@ -43,9 +44,34 @@ class SourceChunk(BaseModel):
 
 
 class ReportRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
     template: str = Field(pattern="^(technical|meeting|research)$")
-    title: str = Field(min_length=1)
-    instructions: str = ""
+    title: str = Field(min_length=1, max_length=500)
+    instructions: str = Field(default="", max_length=12000)
+    model: Literal['qwen2.5:7b', 'llama3.1:70b'] = 'qwen2.5:7b'
+    document_ids: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    sections: list[str] | None = Field(default=None, min_length=1, max_length=4)
+
+    @field_validator('title')
+    @classmethod
+    def meaningful_title(cls, value):
+        if not value.strip():
+            raise ValueError('Title must contain text')
+        return value.strip()
+
+    @field_validator('sections', 'document_ids')
+    @classmethod
+    def bounded_items(cls, values, info):
+        if values is None:
+            return None
+        limit = 120 if info.field_name == 'sections' else 36
+        cleaned = [item.strip() for item in values]
+        if any(not item or len(item) > limit or '\n' in item or '\r' in item for item in cleaned):
+            raise ValueError('Invalid report selection')
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError('Duplicate report selection')
+        return cleaned
+
 
 
 class DashboardStats(BaseModel):

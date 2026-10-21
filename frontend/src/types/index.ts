@@ -17,3 +17,7 @@ export type DocumentContent = {
   target_found: boolean | null
   chunks: { content: string; chunk_index: number; page: number | null }[]
 }
+
+export type ReportSection = { heading:string; status:string; evidence_chunks:number; documents:number; truncated:boolean; completeness_unverified:boolean }
+export type ReportCoverage = { total_sections:number; successful_sections:number; verified_sections:number; verification_enabled:boolean; outline_method:string; evidence_documents:number; selected_documents:number|null; unrepresented_document_ids:string[]; all_documents_reviewed:boolean; partial:boolean }
+export type ReportResult = { content:string; sources:Source[]; sections?:ReportSection[]; coverage?:ReportCoverage; model?:ChatModel; scope?:Scope }

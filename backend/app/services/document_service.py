@@ -67,23 +67,23 @@ def _upload_files(files: list[UploadFile], db: Session, scope: str = "private", 
                 count = (get_vector_store() if scope == "private" else get_vector_store("public")).add(document_id, file.filename or path.name, chain([first], chunks))
             finally:
                 chunks.close()
-            logger.info('Indexed {}: {} chunks', file.filename, count)
+            logger.info('Indexed document={} scope={} chunks={}', document_id, scope, count)
             record = Document(id=document_id, filename=file.filename or path.name, filepath=str(path))
             db.add(record)
             saved.append(record)
         db.commit()
     except Exception as exc:
         if isinstance(exc, HTTPException):
-            logger.warning('Upload rejected ({}): {}', exc.status_code, exc.detail)
+            logger.warning('Upload rejected status={}', exc.status_code)
         else:
-            logger.exception('Document upload failed')
+            logger.error('Document upload failed type={}', type(exc).__name__)
         db.rollback()
         for document_id, path in pending:
             try:
                 if document_id in indexed:
                     (get_vector_store() if scope == "private" else get_vector_store("public")).delete_document(document_id)
             except Exception:
-                logger.exception('Could not clean vectors for {}', document_id)
+                logger.error('Could not clean vectors for document={}', document_id)
             path.unlink(missing_ok=True)
         raise
     for item in saved:
