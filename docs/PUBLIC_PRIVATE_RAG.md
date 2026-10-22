@@ -4,7 +4,7 @@ Thay đổi này xử lý các điểm ghi nhận trong `note.docx`: thiếu b�
 
 ## Chat trực tiếp, không RAG
 
-Trong trang Hỏi đáp, chọn **Chat trực tiếp với OpenAI**. Backend dùng model/key hiện có, không đọc kho public/private, lịch sử DB, vector, Ollama, embedding, planner, reranker hoặc reviewer. Giao diện ẩn danh mục/nguồn; khách chưa đăng nhập vẫn dùng được trong hạn mức public.
+Trong trang Hỏi đáp, chọn **Trò chuyện**; **Hỏi tài liệu** là chế độ RAG. Backend dùng `OPENAI_CHAT_MODEL` (mặc định `gpt-6-luna`) và `OPENAI_API_KEY`, độc lập với model RAG trong `OPENAI_MODEL`, không đọc kho public/private, lịch sử DB, vector, Ollama, embedding, planner, reranker hoặc reviewer. Giao diện ẩn danh mục/nguồn; khách chưa đăng nhập vẫn dùng được trong hạn mức public. Tên model và mô tả kỹ thuật không hiển thị trong giao diện mặc định. Bộ chọn mô hình trên chat/báo cáo được ẩn; `VITE_SHOW_MODEL_SELECTOR=true` trong `frontend/.env` chỉ dùng khi cần hiện lại để kiểm thử, cần khởi động lại Vite/build lại sau khi đổi.
 
 - `GET /chat/models?mode=direct`: chỉ kiểm tra key đã cấu hình, không probe Ollama/DB. `GET /chat/models` giữ trạng thái cho RAG.
 - `POST /chat/direct`: chỉ nhận `messages` gồm `role=user|assistant` và `content`. Không nhận scope, model tùy ý, system/developer/tool, tools, database URL hay conversation ID. Model lấy từ backend.
@@ -20,7 +20,22 @@ Ví dụ body:
 {"messages":[{"role":"user","content":"Tên tôi là Lan."},{"role":"assistant","content":"Chào Lan."},{"role":"user","content":"Tên tôi là gì?"}]}
 ```
 
-Thiết kế dựa theo [OpenAI Docs về conversation state](https://developers.openai.com/api/docs/guides/conversation-state). Đây là chat văn bản qua API; chưa có browsing, tệp đính kèm hay các công cụ của web ChatGPT. `store=False` không đồng nghĩa Zero Data Retention. API báo riêng lỗi credit, quota, rate limit, key/quyền model và kết nối; không trả payload lỗi/key từ nhà cung cấp.
+Thiết kế dựa theo [OpenAI Docs về conversation state](https://developers.openai.com/api/docs/guides/conversation-state). Đây là chat văn bản qua API; có thể đính kèm một PDF như mô tả bên dưới, chưa có browsing hoặc các công cụ khác của web ChatGPT. `store=False` không đồng nghĩa Zero Data Retention. API báo riêng lỗi credit, quota, rate limit, key/quyền model và kết nối; không trả payload lỗi/key từ nhà cung cấp.
+
+
+### PDF đính kèm trong Trò chuyện
+
+Chọn **Trò chuyện → Đính kèm PDF**, chọn một tệp rồi nhập câu hỏi và gửi. Tệp được giữ trong bộ nhớ của trang để gửi cùng các câu hỏi tiếp theo; không có yêu cầu OpenAI nào khi chỉ chọn tệp. Đổi/gỡ PDF, chuyển chế độ hoặc bấm **Cuộc trò chuyện mới** xóa hội thoại và ngữ cảnh tệp; bản nháp câu hỏi được giữ khi đổi/gỡ tệp.
+
+- Nhận một PDF tối đa **10 MiB, 100 trang**. Backend kiểm tra tên/MIME, chữ ký PDF, khả năng đọc, số trang và từ chối PDF có mật khẩu. PDF scan có thể gửi trực tiếp cho model hỗ trợ vision; ứng dụng không chạy OCR hoặc embedding trong luồng này.
+- `POST /chat/direct/pdf` dùng multipart với đúng hai trường: `messages` (JSON theo `DirectChatRequest`) và `file` (PDF). Không nhận file ID, URL, đường dẫn máy chủ, scope hay model do client chọn. Không có API lấy PDF từ tài liệu đã ingest.
+- Dùng chung hạn mức public; cấp slot trước khi đọc multipart, kiểm tra Origin nếu có, chặn khi chưa có key. Body tối đa 10 MiB + 128 KiB kể cả request chunked; phần JSON tối đa 64 KiB và giữ nguyên giới hạn lịch sử chat.
+- Body được đọc dưới giới hạn trước khi parser có thể tạo tệp tạm. Multipart được đóng trong mọi nhánh xử lý; không lưu PDF vào thư mục upload, DB, Chroma hoặc kho public/private. Không ingest hoặc truy xuất RAG.
+- Gửi PDF inline qua `input_file.file_data` base64 cùng câu hỏi cuối, `store=False`; không dùng Files API, file_search, vector store hay tools. Mỗi lượt hỏi tiếp gửi lại cùng PDF, nên có thể dùng nhiều input token hơn chat văn bản.
+- PDF và tên tệp được coi là dữ liệu không tin cậy. Prompt yêu cầu giữ số liệu, nêu trang khi xác định được và không làm theo chỉ thị trong tài liệu; đây không phải bước kiểm chứng bằng chứng của RAG. Không đảm bảo model đọc/diễn giải đúng mọi trang.
+- Lỗi gửi giữ tệp và câu hỏi để thử lại thủ công. Trong lúc gửi không đổi/gỡ tệp. Giao diện không hiển thị cấu hình kỹ thuật hoặc bộ chọn model mặc định.
+
+Cách gửi theo [OpenAI Docs về file inputs](https://developers.openai.com/api/docs/guides/file-inputs), dùng model có hỗ trợ PDF/vision, hiện cấu hình mặc định [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) qua `OPENAI_CHAT_MODEL=gpt-6-luna`. Adapter đặt `reasoning.effort=none` cho model này để giữ ngân sách đầu ra và độ trễ của luồng chat trước đây, theo [hướng dẫn chuyển model](https://developers.openai.com/api/docs/guides/latest-model#migration-quickstart). `store=False` không đồng nghĩa Zero Data Retention hay xóa dữ liệu khỏi mọi hệ thống của nhà cung cấp.
 
 ## Quy tắc dữ liệu
 
@@ -32,7 +47,7 @@ Phần dưới áp dụng cho chế độ **Hỏi đáp tài liệu (RAG)**.
 | `llama3.1:70b` | Có | Có | Không |
 | `openai` (model theo `OPENAI_MODEL`) | Bị chặn | Có | Chỉ bằng chứng public |
 
-**Chat public dùng được với `qwen2.5:7b` qua Ollama mà không cần đăng nhập nội bộ hay cấu hình OpenAI key.** Đây là mô hình mặc định trên giao diện; khách chưa đăng nhập luôn dùng `scope=public`. Quản trị viên đăng nhập rồi upload vào kho **Public · mô hình local hoặc OpenAI** để cung cấp tài liệu cho luồng này. Không tự chuyển/copy dữ liệu nội bộ sang public.
+**Chat public dùng được với `qwen2.5:7b` qua Ollama mà không cần đăng nhập nội bộ hay cấu hình OpenAI key.** Đây là mô hình mặc định cho mục **Hỏi tài liệu**; khách chưa đăng nhập luôn dùng `scope=public`. Quản trị viên đăng nhập rồi upload vào kho **Public · mô hình local hoặc OpenAI** để cung cấp tài liệu cho luồng này. Không tự chuyển/copy dữ liệu nội bộ sang public.
 
 Trong chế độ RAG, local chọn nội bộ, public hoặc cả hai. OpenAI chỉ chấp nhận `scope=public`; yêu cầu `private` hoặc `all` bị backend trả 403 trước khi mở chỉ mục hay gọi model. Không có fallback từ OpenAI sang kho nội bộ. Không cấu hình key trả 503; lỗi gọi API trả thông báo không chứa key/prompt; phân biệt lỗi credit/quota, rate limit, quyền và kết nối.
 
@@ -53,6 +68,7 @@ PUBLIC_CHROMA_DIR=./public_chroma_data
 PUBLIC_UPLOAD_DIR=./storage/public/uploads
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
+OPENAI_CHAT_MODEL=gpt-6-luna
 OPENAI_TIMEOUT=90
 QUERY_EXPANSION=true
 GROUNDING_VERIFICATION=true

@@ -1,5 +1,15 @@
 import type { DirectChatMessage } from '../types'
 
+export const DIRECT_PDF_MAX_BYTES = 10 * 1024 * 1024
+
+export function directPdfError(file: Pick<File, 'name' | 'size' | 'type'>): string | undefined {
+  if (!file.name.toLowerCase().endsWith('.pdf') || (file.type && !['application/pdf', 'application/octet-stream'].includes(file.type)))
+    return 'Chỉ hỗ trợ tệp PDF.'
+  if (!file.size) return 'Tệp PDF đang trống. Hãy chọn tệp khác.'
+  if (file.size > DIRECT_PDF_MAX_BYTES) return 'PDF tối đa 10 MB. Hãy chọn tệp nhỏ hơn.'
+  return undefined
+}
+
 const encoder = new TextEncoder()
 
 function fits(messages: DirectChatMessage[]): boolean {

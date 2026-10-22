@@ -17,17 +17,17 @@ Chi tiết cách triển khai, ranh giới bảo mật và giới hạn: [PUBLIC
 
 ## Quyền truy cập khi phục vụ người dùng bên ngoài
 
-Chưa đăng nhập có thể xem/hỏi public bằng **Qwen 2.5 · 7B chạy qua Ollama trên máy chủ** (mặc định), không cần OpenAI key. Chọn **Mô hình trả lời: Qwen 2.5 · 7B (local)** và **Nguồn tài liệu: Public**; chỉ các tài liệu đã ingest vào kho public được truy xuất. Private/all, upload, xóa và báo cáo cần khóa `INTERNAL_ACCESS_TOKEN` trong `.env` backend (hoặc `.env` gốc khi chạy Compose). Khóa để trống thì các chức năng này bị khóa. Dùng nút **Đăng nhập nội bộ**; khóa không được lưu trong storage trình duyệt. Production cần HTTPS, `SESSION_COOKIE_SECURE=true`, `CORS_ORIGINS` đúng tên miền. Xem [cấu hình quyền và triển khai](docs/PUBLIC_PRIVATE_RAG.md#truy-cập-từ-bên-ngoài-quyền-public-và-quyền-nội-bộ).
+Chưa đăng nhập có thể xem/hỏi public bằng **Qwen 2.5 · 7B chạy qua Ollama trên máy chủ** (mặc định), không cần OpenAI key. Mục **Hỏi tài liệu** tự dùng Qwen và kho công khai cho khách chưa đăng nhập; chỉ các tài liệu đã ingest vào kho public được truy xuất. Private/all, upload, xóa và báo cáo cần khóa `INTERNAL_ACCESS_TOKEN` trong `.env` backend (hoặc `.env` gốc khi chạy Compose). Khóa để trống thì các chức năng này bị khóa. Dùng nút **Đăng nhập nội bộ**; khóa không được lưu trong storage trình duyệt. Production cần HTTPS, `SESSION_COOKIE_SECURE=true`, `CORS_ORIGINS` đúng tên miền. Xem [cấu hình quyền và triển khai](docs/PUBLIC_PRIVATE_RAG.md#truy-cập-từ-bên-ngoài-quyền-public-và-quyền-nội-bộ).
 
 Frontend mặc định dùng `/api` cùng origin: Vite proxy khi phát triển, Nginx proxy khi chạy Docker. Các cổng backend/Ollama/Chroma chỉ bind loopback; service Chroma cũ chuyển sang profile tùy chọn vì backend dùng Chroma nhúng. Giữ nguyên volumes và không ingest lại nếu đã dùng v5.
 
 ## Chat trực tiếp với OpenAI
 
-Trong trang **Hỏi đáp**, chọn **Chế độ hỏi đáp → Chat trực tiếp với OpenAI** để trò chuyện với model trong `OPENAI_MODEL`, dùng `OPENAI_API_KEY` ở backend. Không cần tài liệu đã ingest, Ollama hay embedding; chế độ này không đọc DB tài liệu/vector và không chạy RAG. **Hỏi đáp tài liệu (RAG)** vẫn giữ các lựa chọn Qwen/Llama/OpenAI.
+Trong trang **Hỏi đáp**, chọn **Trò chuyện** để trò chuyện với model trong `OPENAI_CHAT_MODEL` (mặc định `gpt-6-luna`), dùng `OPENAI_API_KEY` ở backend. Không cần tài liệu đã ingest, Ollama hay embedding; chế độ này không đọc DB tài liệu/vector và không chạy RAG. **Hỏi tài liệu** giữ luồng RAG riêng. Bộ chọn mô hình trên chat và báo cáo mặc định được ẩn; khi cần kiểm thử nội bộ, đặt `VITE_SHOW_MODEL_SELECTOR=true` trong `frontend/.env` và khởi động lại Vite hoặc build lại frontend.
 
 Ứng dụng gửi tối đa 10 cặp trao đổi gần nhất cùng tin nhắn mới qua Responses API với `store=False`, theo [OpenAI Docs về conversation state](https://developers.openai.com/api/docs/guides/conversation-state). Khi vượt ngân sách, chỉ giữ các cặp gần nhất và hiển thị thông báo. Lịch sử chỉ ở bộ nhớ trang, không lưu DB/localStorage; chuyển chế độ, đăng xuất hoặc bấm **Cuộc trò chuyện mới** xóa hội thoại/bản nháp. Nội dung phiên RAG không tự đưa vào chat trực tiếp.
 
-Đây là chat văn bản qua API, chưa có duyệt web, tệp đính kèm, voice hay các công cụ của website ChatGPT. Trạng thái đã cấu hình không xác nhận quyền/hạn mức API; lỗi credit, quota, key và kết nối được báo khi gửi câu hỏi. `store=False` không đồng nghĩa Zero Data Retention.
+Trong **Trò chuyện**, bấm nút kẹp giấy **Đính kèm PDF** để hỏi về một PDF tối đa **10 MB, 100 trang**. Cùng PDF được gửi lại khi hỏi tiếp; thay/gỡ tệp bắt đầu hội thoại mới. Không ingest vào kho tài liệu. PDF được gửi trực tiếp qua [file inputs của OpenAI](https://developers.openai.com/api/docs/guides/file-inputs). Chưa có duyệt web, voice hay các công cụ khác của website ChatGPT. Trạng thái đã cấu hình không xác nhận quyền/hạn mức API; lỗi credit, quota, key và kết nối được báo khi gửi câu hỏi. `store=False` không đồng nghĩa Zero Data Retention.
 
 ## Pipeline chat v5
 
@@ -111,7 +111,8 @@ Giữ nguyên `DATABASE_URL`, `CHROMA_DIR`, `UPLOAD_DIR` trên máy đã ingest.
 | `INTERNAL_ACCESS_TOKEN` | trống | Khóa ngẫu nhiên 32–512 ký tự để mở quyền nội bộ |
 | `SESSION_COOKIE_SECURE`, `SESSION_MAX_AGE` | `false`, `14400` | Đặt secure=true khi triển khai HTTPS |
 | `PUBLIC_CHAT_RATE_LIMIT`, `PUBLIC_CHAT_MAX_CONCURRENT` | `20`, `2` | Hạn mức/phút/IP và số câu xử lý đồng thời khi chưa đăng nhập |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | Model cho lựa chọn OpenAI |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Model OpenAI cho Hỏi tài liệu/báo cáo (RAG) |
+| `OPENAI_CHAT_MODEL` | `gpt-6-luna` | Model cho Trò chuyện và PDF đính kèm; độc lập với RAG |
 | `OPENAI_TIMEOUT` | `90` | Timeout giây mỗi request API |
 | `EMBEDDING_MODEL` | `qwen3-embedding:0.6b` | Embedding qua Ollama cho hai kho riêng |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | `1600`, `240` | Ký tự Unicode |

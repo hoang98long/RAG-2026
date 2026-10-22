@@ -78,6 +78,43 @@ def direct_chat(payload: DirectChatRequest):
     return ok({'answer': direct_answer(payload.messages), 'model': 'openai', 'mode': 'direct', 'sources': []})
 
 
+
+@router.post('/chat/direct/pdf', dependencies=[Depends(get_direct_chat_slot)])
+async def direct_pdf_chat(request: Request):
+    # No declarative UploadFile parameter: acquire the request budget before reading multipart.
+    from starlette.datastructures import UploadFile as FormFile
+    from starlette.concurrency import run_in_threadpool
+    from pydantic import ValidationError
+    from app.core.access import check_origin
+    from app.core.direct_pdf import DIRECT_PDF_MAX_BYTES
+    from app.services.model_provider import validate_selection
+    from app.services.direct_pdf_service import direct_pdf_answer
+    if request.headers.get('origin'):
+        check_origin(request)
+    validate_selection('openai', 'public')
+    if not request.headers.get('content-type', '').lower().startswith('multipart/form-data'):
+        raise HTTPException(400, 'Vui lòng gửi một PDF cùng câu hỏi.')
+    # Buffer under the raw body cap before multipart creates any temporary files.
+    await request.body()
+    async with request.form(max_files=1, max_fields=1, max_part_size=64 * 1024) as form:
+        fields = list(form.multi_items())
+        if len(fields) != 2 or {key for key, _ in fields} != {'messages', 'file'}:
+            raise HTTPException(422, 'Chỉ gửi một PDF cùng nội dung câu hỏi.')
+        raw, upload = form['messages'], form['file']
+        if not isinstance(raw, str) or not isinstance(upload, FormFile):
+            raise HTTPException(422, 'Nội dung gửi chưa hợp lệ.')
+        if len(raw.encode('utf-8')) > 64 * 1024:
+            raise HTTPException(413, 'Nội dung hội thoại quá dài.')
+        try:
+            payload = DirectChatRequest.model_validate_json(raw)
+        except (ValidationError, ValueError):
+            raise HTTPException(422, 'Nội dung hội thoại chưa hợp lệ.') from None
+        data = await upload.read(DIRECT_PDF_MAX_BYTES + 1)
+        answer_text = await run_in_threadpool(
+            direct_pdf_answer, payload.messages, data, upload.filename or '', upload.content_type)
+    return ok({'answer': answer_text, 'model': 'openai', 'mode': 'direct', 'sources': []})
+
+
 @router.get('/chat/models')
 def chat_models(mode: Literal['rag', 'direct'] = Query('rag')):
     from app.services.readiness import direct_model_status, model_status

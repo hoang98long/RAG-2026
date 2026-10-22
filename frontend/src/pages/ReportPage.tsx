@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import { Copy, Download, Sparkles, FileText, CheckCircle2 } from 'lucide-react'
 import axios from 'axios'
+import { showModelSelector } from '../config'
 import { errorMessage } from '../utils/errors'
 import { hideCitationMarkers, sourceUrl } from '../utils/sources'
 import { createReport, getChatModels, getDocumentPage } from '../services/api'
@@ -50,7 +51,7 @@ export default function ReportPage() {
       const data = await createReport({ template:values.template, title:values.title.trim(), instructions:values.instructions,
         model, ...(selectionMode ? { document_ids:selected } : {}), ...(sections.length ? { sections } : {}) }, controller.signal)
       if (controller.signal.aborted) return
-      setResult(data); setResultLabel(`${values.title.trim()} · ${model}`)
+      setResult(data); setResultLabel(showModelSelector ? `${values.title.trim()} · ${model}` : values.title.trim())
     } catch (reason) {
       if (!axios.isCancel(reason) && !controller.signal.aborted) setError(errorMessage(reason,'Không thể tạo báo cáo. Hãy kiểm tra dịch vụ mô hình.'))
     } finally { submitting.current = false; if (!controller.signal.aborted) setLoading(false); if (request.current === controller) request.current = null }
@@ -72,8 +73,8 @@ export default function ReportPage() {
     <section><p className="page-eyebrow">TỔNG HỢP CÓ ĐỐI CHIẾU</p><h1 className="text-3xl font-bold">Tạo báo cáo</h1><p className="mt-2 text-sm leading-6 text-slate-500">Lập dàn ý, tìm nguồn cho từng mục và kiểm chứng trước khi tổng hợp.</p>
       <form onSubmit={handleSubmit(submit)} className="card mt-5 p-5"><fieldset disabled={loading} className="space-y-4 disabled:opacity-70">
         <label className="block text-sm font-medium">Mẫu báo cáo<select className="input mt-1" {...register('template')}><option value="technical">Báo cáo kỹ thuật</option><option value="meeting">Tóm tắt cuộc họp</option><option value="research">Tổng quan nghiên cứu</option></select></label>
-        <label className="block text-sm font-medium">Mô hình viết báo cáo<select className="input mt-1" value={model} onChange={event => setModel(event.target.value as typeof model)}>{(models || [{ id:'qwen2.5:7b' as ChatModel, label:'Qwen 2.5 · 7B', configured:true },{ id:'llama3.1:70b' as ChatModel,label:'Llama 3.1 · 70B',configured:true }]).filter(option => option.id !== 'openai').map(option => <option key={option.id} value={option.id}>{option.label}{option.ready === false ? ' · chưa sẵn sàng' : ''}</option>)}</select></label>
-        {(modelsError || chosen?.ready === false) && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">{chosen?.message || 'Chưa kiểm tra được mô hình.'} <button type="button" className="underline" onClick={() => void retryModels()}>Kiểm tra lại</button></p>}
+        {showModelSelector && <label className="block text-sm font-medium">Mô hình viết báo cáo<select className="input mt-1" value={model} onChange={event => setModel(event.target.value as typeof model)}>{(models || [{ id:'qwen2.5:7b' as ChatModel, label:'Qwen 2.5 · 7B', configured:true },{ id:'llama3.1:70b' as ChatModel,label:'Llama 3.1 · 70B',configured:true }]).filter(option => option.id !== 'openai').map(option => <option key={option.id} value={option.id}>{option.label}{option.ready === false ? ' · chưa sẵn sàng' : ''}</option>)}</select></label>}
+        {(modelsError || chosen?.ready === false) && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">Tạm thời chưa thể tạo báo cáo. Vui lòng thử lại sau. <button type="button" className="underline" onClick={() => void retryModels()}>Thử lại</button></p>}
         <label className="block text-sm font-medium">Tiêu đề<input className="input mt-1" maxLength={500} {...register('title',{ required:'Nhập tiêu đề báo cáo.',validate:value => !!value.trim() || 'Nhập tiêu đề báo cáo.' })} placeholder="Ví dụ: Đánh giá điều kiện bảo hành" /></label>
         {errors.title && <p role="alert" className="text-xs text-red-600">{errors.title.message}</p>}
         <label className="block text-sm font-medium">Yêu cầu bổ sung<textarea className="input mt-1 min-h-24" maxLength={12000} {...register('instructions')} placeholder="Nêu đối tượng đọc, phạm vi, thời kỳ và điểm cần đối chiếu..." /></label>
@@ -84,7 +85,6 @@ export default function ReportPage() {
           <div className="max-h-48 space-y-1 overflow-auto">{documentsPending ? <p className="text-xs text-slate-500">Đang tải tài liệu...</p> : documentsError ? <p role="alert" className="text-xs text-red-600">Không tải được tài liệu. <button type="button" className="underline" onClick={() => void retryDocuments()}>Thử lại</button></p> : documents?.items.length ? documents.items.map(doc => <label key={doc.id} className="flex cursor-pointer items-start gap-2 rounded-lg px-1 py-2 text-xs text-slate-600"><input type="checkbox" className="mt-0.5" checked={selected.includes(doc.id)} disabled={selected.length>=20 && !selected.includes(doc.id)} onChange={() => toggleDocument(doc.id)}/><span className="min-w-0 break-all">{doc.filename}</span></label>) : <p className="text-xs text-slate-500">Không có tài liệu phù hợp.</p>}</div>
           {(documents?.total || 0)>50 && <div className="flex justify-between text-xs"><button type="button" disabled={offset===0} onClick={() => setOffset(value => Math.max(0,value-50))}>Trước</button><span>{Math.floor(offset/50)+1}/{Math.ceil((documents?.total || 0)/50)}</span><button type="button" disabled={offset+50 >= (documents?.total || 0)} onClick={() => setOffset(value => value+50)}>Tiếp</button></div>}
         </div>}
-        <p className="text-xs leading-5 text-slate-500">Sử dụng mô hình local và tài liệu nội bộ. Hệ thống tổng hợp các đoạn liên quan; chưa xác nhận đọc đầy đủ mọi tài liệu.</p>
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
         <button disabled={loading || modelBlocked || (selectionMode && !selected.length)} className="btn w-full"><Sparkles size={17}/>{loading ? 'Đang tạo...' : 'Tạo báo cáo'}</button>
       </fieldset></form>

@@ -36,12 +36,16 @@ export const askChat = (question: string, model: ChatModel = 'qwen2.5:7b', scope
   if (typeof result.answer !== 'string' || !Array.isArray(result.sources)) throw new Error('Câu trả lời nhận được chưa hợp lệ.')
   return { ...result, sources: validateSources(result.sources, scope) }
 })
-export const askDirectChat = (messages: DirectChatMessage[], signal?: AbortSignal) => api.post<ApiResponse<{answer:string;sources:Source[];mode:'direct';model:'openai'}>>('/chat/direct', { messages }, { timeout: aiTimeout, signal }).then(r => {
+export const askDirectChat = (messages: DirectChatMessage[], signal?: AbortSignal, pdf?: File | null) => {
+  const form = pdf ? new FormData() : null
+  if (form && pdf) { form.append('messages', JSON.stringify({ messages })); form.append('file', pdf) }
+  return api.post<ApiResponse<{answer:string;sources:Source[];mode:'direct';model:'openai'}>>(pdf ? '/chat/direct/pdf' : '/chat/direct', form || { messages }, { timeout: aiTimeout, signal }).then(r => {
   const result = payload(r.data)
   if (typeof result.answer !== 'string' || !result.answer.trim() || result.mode !== 'direct' ||
       !Array.isArray(result.sources) || result.sources.length) throw new Error('Câu trả lời trực tiếp nhận được chưa hợp lệ.')
   return result
-})
+  })
+}
 export const getChatModels = (signal?: AbortSignal, mode: ChatMode = 'rag') => api.get<ApiResponse<{id:ChatModel;label:string;configured:boolean;ready?:boolean;reason?:string;message?:string}[]>>('/chat/models', { signal, params: mode === 'direct' ? { mode } : undefined }).then(r => payload(r.data))
 export const createReport = (data: {template:string;title:string;instructions:string;model?:'qwen2.5:7b'|'llama3.1:70b';document_ids?:string[];sections?:string[]}, signal?: AbortSignal) => api.post<ApiResponse<import('../types').ReportResult>>('/report', data, { timeout: aiTimeout, signal }).then(r => { const result = payload(r.data); return { ...result, sources: validateSources(result.sources, 'private') } })
 

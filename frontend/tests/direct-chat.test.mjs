@@ -5,7 +5,17 @@ import ts from 'typescript'
 
 const source = readFileSync(new URL('../src/utils/directChat.ts', import.meta.url), 'utf8')
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } })
-const { buildDirectConversation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+const { buildDirectConversation, directPdfError } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+
+
+test('PDF attachment validation accepts one nonempty PDF and rejects unsafe type and oversize input',()=>{
+  const valid={name:'document.PDF',type:'application/pdf',size:123}
+  assert.equal(directPdfError(valid),undefined)
+  assert.equal(directPdfError({...valid,type:''}),undefined)
+  assert.equal(directPdfError({...valid,type:'application/octet-stream'}),undefined)
+  for(const invalid of [{...valid,name:'bad.docx'},{...valid,type:'text/html'},{...valid,size:0},{...valid,size:10*1024*1024+1}])
+    assert.equal(typeof directPdfError(invalid),'string')
+})
 
 test('direct context retains complete recent exchanges without mutating history', () => {
   const history = Array.from({ length: 24 }, (_, index) => Object.freeze({

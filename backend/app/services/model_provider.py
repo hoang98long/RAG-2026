@@ -46,12 +46,14 @@ def provider_error(exc: Exception) -> HTTPException:
 
 class OpenAIChat:
     """Minimal LangChain-compatible adapter to the stateless Responses API."""
-    def __init__(self):
+    def __init__(self, *, direct: bool = False):
         settings = get_settings()
         validate_selection('openai', 'public')
         from openai import OpenAI
         self.client = OpenAI(api_key=settings.openai_api_key.get_secret_value(), timeout=settings.openai_timeout, max_retries=1)
-        self.model = settings.openai_model
+        self.model = settings.openai_chat_model if direct else settings.openai_model
+        # Preserve the non-reasoning latency/output budget when migrating from GPT-4.1.
+        self.request_options = {"reasoning": {"effort": "none"}} if self.model == "gpt-6-luna" else {}
         self.max_output_tokens = settings.llm_num_predict
 
     @staticmethod
@@ -60,9 +62,12 @@ class OpenAIChat:
         return [{'role': roles[message.type], 'content': message.content} for message in messages]
 
     def invoke(self, messages):
+        return self.invoke_input(self._input(messages))
+
+    def invoke_input(self, items):
         try:
-            result = self.client.responses.create(model=self.model, input=self._input(messages),
-                                                   max_output_tokens=self.max_output_tokens, store=False)
+            result = self.client.responses.create(model=self.model, input=items,
+                                                   max_output_tokens=self.max_output_tokens, store=False, **self.request_options)
             if result.status != 'completed':
                 raise HTTPException(502, 'OpenAI chưa hoàn tất câu trả lời; hãy thu hẹp câu hỏi hoặc tăng giới hạn đầu ra')
             return AIMessage(content=result.output_text)
@@ -78,7 +83,7 @@ class OpenAIChat:
             def invoke(self, messages):
                 try:
                     result = owner.client.responses.parse(model=owner.model, input=owner._input(messages),
-                        text_format=schema, max_output_tokens=owner.max_output_tokens, store=False)
+                        text_format=schema, max_output_tokens=owner.max_output_tokens, store=False, **owner.request_options)
                     if result.status != 'completed' or result.output_parsed is None:
                         raise ValueError('Missing structured response')
                     return result.output_parsed

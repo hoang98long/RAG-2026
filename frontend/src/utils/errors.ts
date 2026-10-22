@@ -18,6 +18,28 @@ export function errorMessage(error: unknown, fallback = 'Không thể hoàn tấ
   return fallback
 }
 
+export function chatErrorMessage(error: unknown): string {
+  const unavailable = 'Chưa thể nhận câu trả lời lúc này. Vui lòng thử lại sau.'
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status
+    if (status === 429) {
+      const seconds = Number(error.response?.headers?.['retry-after'])
+      return Number.isFinite(seconds) && seconds > 0 && seconds <= 3600
+        ? `Có nhiều yêu cầu cùng lúc. Vui lòng thử lại sau ${Math.ceil(seconds)} giây.`
+        : 'Có nhiều yêu cầu cùng lúc. Vui lòng thử lại sau.'
+    }
+    if (status && status >= 500) return unavailable
+    if (status === 401) return 'Phiên truy cập đã hết hạn. Vui lòng đăng nhập lại.'
+    if (status === 403) return 'Bạn không có quyền sử dụng tài liệu này.'
+    if (status === 413 && /PDF/i.test(String(error.response?.data?.detail || ''))) return 'PDF vượt giới hạn cho phép. Hãy chọn tệp nhỏ hơn.'
+    if (status === 413) return 'Nội dung quá dài. Hãy rút ngắn tin nhắn và thử lại.'
+    if (status === 422) return 'Vui lòng kiểm tra lại nội dung vừa nhập.'
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return 'Phản hồi mất nhiều thời gian. Bạn hãy thử lại hoặc rút ngắn câu hỏi.'
+    if (!error.response) return 'Không thể kết nối. Vui lòng kiểm tra mạng và thử lại.'
+  }
+  return errorMessage(error, unavailable)
+}
+
 export function retryRead(failureCount: number, error: unknown): boolean {
   if (axios.isCancel(error) || (error instanceof Error && error.name === 'ScopeViolation')) return false
   const status = axios.isAxiosError(error) ? error.response?.status : undefined

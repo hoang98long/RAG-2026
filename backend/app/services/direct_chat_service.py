@@ -18,7 +18,7 @@ def direct_answer(messages: list[DirectChatMessage]) -> str:
         HumanMessage(content=item.content) if item.role == 'user' else AIMessage(content=item.content)
         for item in messages
     )
-    provider = OpenAIChat()
+    provider = OpenAIChat(direct=True)
     try:
         response = provider.invoke(conversation)
     finally:

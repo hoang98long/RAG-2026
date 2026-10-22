@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     public_chat_max_concurrent: int = Field(default=2, ge=1, le=16)
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-4.1-mini"
+    openai_chat_model: str = "gpt-6-luna"
     openai_timeout: float = Field(default=90, gt=0)
     llm_timeout: float = Field(default=180, gt=0)
     embedding_timeout: float = Field(default=120, gt=0)

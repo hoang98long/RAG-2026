@@ -55,7 +55,7 @@ def direct_model_status(settings=None):
     """Direct chat needs an API key only; never probe Ollama or storage."""
     settings = settings or get_settings()
     configured = bool(settings.openai_api_key.get_secret_value().strip())
-    return [dict(id='openai', label=f'OpenAI · {settings.openai_model}', configured=configured, ready=configured,
+    return [dict(id='openai', label=f'OpenAI · {settings.openai_chat_model}', configured=configured, ready=configured,
                  reason='api_configured' if configured else 'api_key_missing',
                  message='Đã cấu hình OpenAI. Quyền mô hình và hạn mức được kiểm tra khi gửi tin nhắn.' if configured else
                          'Máy chủ chưa cấu hình OpenAI API key.')]

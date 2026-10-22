@@ -111,7 +111,7 @@ try {
   assert.equal((await context.request.get(origin+'/api/documents?scope=private')).status(), 401)
   assert.equal((await context.request.get(origin+'/api/documents?scope=private', { headers:{ Cookie:`documind_session=${stolenCookie}` } })).status(), 401)
   await page.goto(origin+'/chat')
-  await expect(page.getByRole('alert')).toContainText('Ollama')
+  await expect(page.getByRole('alert')).toContainText('Tạm thời chưa thể trả lời')
   await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Question held while offline')
   await expect(page.getByRole('button', { name:'Gửi', exact:true })).toBeDisabled()
   assert.deepEqual(faults, [])

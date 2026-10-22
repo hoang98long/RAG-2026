@@ -40,7 +40,7 @@ class DirectChatTests(unittest.TestCase):
                 return httpx.Response(http_status, json={'error': {
                     'message': 'TEST_OPENAI_SECRET PRIVATE_CANARY', 'type': 'insufficient_quota', 'code': code}})
             return httpx.Response(200, json={'id': 'resp_direct', 'object': 'response', 'created_at': 1,
-                'status': self.status, 'model': self.settings.openai_model,
+                'status': self.status, 'model': self.settings.openai_chat_model,
                 'output': [{'id': 'msg_direct', 'type': 'message', 'role': 'assistant', 'status': 'completed',
                             'content': [{'type': 'output_text', 'text': self.output, 'annotations': []}]}]})
 
@@ -73,12 +73,23 @@ class DirectChatTests(unittest.TestCase):
         self.assertEqual(payload['input'][1:], conversation)
         self.assertEqual(payload['input'][0]['role'], 'system')
         self.assertFalse(payload['store'])
-        self.assertEqual(payload['model'], self.settings.openai_model)
+        self.assertEqual(payload['model'], self.settings.openai_chat_model)
+        self.assertNotEqual(payload['model'], self.settings.openai_model)
+        self.assertEqual(payload['reasoning'], {'effort': 'none'})
         for field in ('tools', 'previous_response_id', 'conversation', 'file_ids', 'vector_store_ids'):
             self.assertNotIn(field, payload)
         for guard in self.storage:
             guard.assert_not_called()
         self.assertTrue(all(client.is_closed() for client in self.clients))
+
+    def test_direct_model_override_is_independent_and_legacy_model_omits_reasoning(self):
+        self.settings.openai_chat_model = 'gpt-4.1-mini'
+        self.settings.openai_model = 'gpt-6-luna'
+        self.assertEqual(self.post().status_code, 200)
+        self.assertEqual(self.requests[0]['model'], 'gpt-4.1-mini')
+        self.assertNotIn('reasoning', self.requests[0])
+        models = self.client.get('/chat/models?mode=direct').json()['data']
+        self.assertEqual(models[0]['label'], 'OpenAI · gpt-4.1-mini')
 
     def test_direct_model_readiness_does_not_need_ollama_embedding_or_document_storage(self):
         response = self.client.get('/chat/models?mode=direct')

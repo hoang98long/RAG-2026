@@ -1,6 +1,7 @@
 """Limit raw multipart bodies before FastAPI finishes parsing/spooling them."""
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
+from app.core.direct_pdf import DIRECT_PDF_MAX_BODY_BYTES
 
 
 class UploadBodyLimitMiddleware:
@@ -13,6 +14,8 @@ class UploadBodyLimitMiddleware:
         path = scope['path'].rstrip('/')
         if path == '/documents/upload':
             max_bytes = self.max_bytes
+        elif path == '/chat/direct/pdf':
+            max_bytes = DIRECT_PDF_MAX_BODY_BYTES
         elif path in {'/chat','/chat/direct','/report'}:
             max_bytes = 64 * 1024
         elif path in {'/auth/login','/auth/logout'}:

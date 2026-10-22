@@ -13,7 +13,7 @@ async function moduleFrom(path) {
 }
 const { parseReaderLocation, readerRequest } = await moduleFrom('../src/utils/reader.ts')
 const { uploadRequestId } = await moduleFrom('../src/utils/uploadId.ts')
-const { errorMessage, retryRead } = await moduleFrom('../src/utils/errors.ts')
+const { errorMessage, chatErrorMessage, retryRead } = await moduleFrom('../src/utils/errors.ts')
 const axios = require('axios')
 
 test('reader rejects invalid scopes, unsafe indices and incomplete fingerprints', () => {
@@ -97,4 +97,27 @@ test('rate limit messages include a bounded retry delay', () => {
   assert.match(errorMessage(error), /12/)
   error.response.headers['retry-after'] = 'not-a-number'
   assert.equal(errorMessage(error), 'Máy chủ đang bận.')
+})
+
+test('chat hides provider diagnostics while preserving useful permission and input feedback', () => {
+  for (const status of [500,502,503,504]) {
+    const error = new axios.AxiosError('provider failure')
+    error.response = { status, data:{detail:'OPENAI_API_KEY missing; Ollama qwen2.5:7b unavailable'} }
+    assert.equal(chatErrorMessage(error),'Chưa thể nhận câu trả lời lúc này. Vui lòng thử lại sau.')
+  }
+  for (const [status, fragment] of [[401,'đăng nhập'],[403,'quyền'],[413,'quá dài'],[422,'nội dung']]) {
+    const error = new axios.AxiosError('request rejected')
+    error.response = {status,data:{detail:'developer detail'}}
+    assert.ok(chatErrorMessage(error).includes(fragment))
+    assert.ok(!chatErrorMessage(error).includes('developer'))
+  }
+})
+
+test('chat rate limits show a bounded wait without leaking provider messages', () => {
+  const error = new axios.AxiosError('rate limited')
+  error.response = {status:429,data:{detail:'OpenAI rate_limit_exceeded secret diagnostic'},headers:{'retry-after':'12'}}
+  assert.match(chatErrorMessage(error),/12 giây/)
+  assert.doesNotMatch(chatErrorMessage(error),/OpenAI|secret|rate_limit/)
+  error.response.headers['retry-after'] = '999999'
+  assert.doesNotMatch(chatErrorMessage(error),/999999/)
 })

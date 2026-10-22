@@ -222,6 +222,8 @@ class IsolationTests(unittest.TestCase):
                 self.assertEqual(plan.queries,['public query'])
         self.assertEqual(len(requests),2)
         self.assertTrue(all(request['store'] is False for request in requests))
+        self.assertTrue(all(request['model'] == self.settings.openai_model for request in requests))
+        self.assertTrue(all('reasoning' not in request for request in requests))
         self.assertTrue(all(not request.get('tools') and not request.get('previous_response_id') for request in requests))
 
 

@@ -25,7 +25,7 @@ export default function AccessControl({ busy = false }: { busy?: boolean }) {
     finally { setPending(false) }
   }
   return <div className="flex items-center gap-3">
-    <span className={`hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold sm:inline-flex ${privateAccess ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}><ShieldCheck size={14}/>{privateAccess ? 'Quyền nội bộ' : 'Truy cập public'}</span>
+    <span className={`hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold sm:inline-flex ${privateAccess ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}><ShieldCheck size={14}/>{privateAccess ? 'Nội bộ' : 'Khách'}</span>
     <button className="btn-secondary whitespace-nowrap text-xs" disabled={pending || busy} onClick={() => privateAccess ? void signOut() : setOpen(true)}>{privateAccess ? <><LogOut size={14}/>Đăng xuất</> : <><KeyRound size={14}/>Đăng nhập nội bộ</>}</button>
     {error && !open && <span role="alert" className="max-w-48 text-xs text-red-600">{error}</span>}
     {open && <dialog ref={dialog} aria-labelledby="access-title" onCancel={event => { if (pending) event.preventDefault(); else close() }} className="w-[calc(100%-2rem)] max-w-md rounded-3xl border border-slate-200 p-7 shadow-2xl backdrop:bg-slate-950/50">
