@@ -20,6 +20,7 @@
   .scope-note { @apply rounded-xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500; }
   .workspace { --workspace-height: calc(100dvh - 7.5rem); }
   .chat-grid { @apply grid items-start gap-4; }
+  .chat-grid.chat-grid-direct { @apply mx-auto w-full max-w-5xl; grid-template-columns: minmax(0, 1fr); }
   .chat-panel { @apply flex h-[680px] max-h-[85dvh] min-h-[420px] min-w-0 flex-col overflow-hidden; }
   .document-reader { @apply flex h-[75dvh] min-h-[420px] flex-col overflow-hidden; }
   @media (min-width: 1280px) {

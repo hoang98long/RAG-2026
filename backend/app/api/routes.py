@@ -11,9 +11,10 @@ from app.core.database import get_db, get_scope_db, get_private_db
 from app.core.access import require_private_access
 from app.core.public_limits import public_chat_slot
 from app.models.models import ChatHistory, Document, ReportHistory
-from app.schemas.schemas import ChatRequest, DocumentOut, ReportRequest
+from app.schemas.schemas import ChatRequest, DirectChatRequest, DocumentOut, ReportRequest
 from app.services.document_service import delete_document, upload_files
 from app.services.rag_service import answer, generate_report
+from app.services.direct_chat_service import direct_answer
 from app.utils.response import ok
 
 Scope = Literal['private', 'public']
@@ -67,9 +68,21 @@ def chat(payload: ChatRequest, db: Session | None = Depends(get_chat_db)):
                'model': payload.model, 'scope': payload.scope})
 
 
+def get_direct_chat_slot(request: Request):
+    with public_chat_slot(request):
+        yield
+
+
+@router.post('/chat/direct', dependencies=[Depends(get_direct_chat_slot)])
+def direct_chat(payload: DirectChatRequest):
+    return ok({'answer': direct_answer(payload.messages), 'model': 'openai', 'mode': 'direct', 'sources': []})
+
+
 @router.get('/chat/models')
-def chat_models():
-    from app.services.readiness import model_status
+def chat_models(mode: Literal['rag', 'direct'] = Query('rag')):
+    from app.services.readiness import direct_model_status, model_status
+    if mode == 'direct':
+        return ok(direct_model_status(get_settings()))
     models, _ = model_status(get_settings())
     return ok(models)
 

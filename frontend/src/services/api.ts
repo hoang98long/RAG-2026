@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { validateSources, ScopeViolation } from '../utils/scope'
-import type { ApiResponse, Document, Source, Scope, ChatScope, ChatModel, Coverage } from '../types'
+import type { ApiResponse, Document, Source, Scope, ChatScope, ChatModel, ChatMode, DirectChatMessage, Coverage } from '../types'
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api', timeout: 20000, withCredentials: true })
 api.interceptors.response.use(response => response, error => {
   if (error.response?.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('documind-access-expired'))
@@ -36,7 +36,13 @@ export const askChat = (question: string, model: ChatModel = 'qwen2.5:7b', scope
   if (typeof result.answer !== 'string' || !Array.isArray(result.sources)) throw new Error('Câu trả lời nhận được chưa hợp lệ.')
   return { ...result, sources: validateSources(result.sources, scope) }
 })
-export const getChatModels = (signal?: AbortSignal) => api.get<ApiResponse<{id:ChatModel;label:string;configured:boolean;ready?:boolean;reason?:string;message?:string}[]>>('/chat/models', { signal }).then(r => payload(r.data))
+export const askDirectChat = (messages: DirectChatMessage[], signal?: AbortSignal) => api.post<ApiResponse<{answer:string;sources:Source[];mode:'direct';model:'openai'}>>('/chat/direct', { messages }, { timeout: aiTimeout, signal }).then(r => {
+  const result = payload(r.data)
+  if (typeof result.answer !== 'string' || !result.answer.trim() || result.mode !== 'direct' ||
+      !Array.isArray(result.sources) || result.sources.length) throw new Error('Câu trả lời trực tiếp nhận được chưa hợp lệ.')
+  return result
+})
+export const getChatModels = (signal?: AbortSignal, mode: ChatMode = 'rag') => api.get<ApiResponse<{id:ChatModel;label:string;configured:boolean;ready?:boolean;reason?:string;message?:string}[]>>('/chat/models', { signal, params: mode === 'direct' ? { mode } : undefined }).then(r => payload(r.data))
 export const createReport = (data: {template:string;title:string;instructions:string;model?:'qwen2.5:7b'|'llama3.1:70b';document_ids?:string[];sections?:string[]}, signal?: AbortSignal) => api.post<ApiResponse<import('../types').ReportResult>>('/report', data, { timeout: aiTimeout, signal }).then(r => { const result = payload(r.data); return { ...result, sources: validateSources(result.sources, 'private') } })
 
 export const getDocumentContent = (id: string, params: { offset?: number; limit?: number; chunk?: number; page?: number; scope?: Scope; version?: string; digest?: string } = {}, signal?: AbortSignal) => api.get<ApiResponse<import('../types').DocumentContent>>(`/documents/${encodeURIComponent(id)}/content`, { params, signal }).then(r => { const result = payload(r.data); if (result.scope !== (params.scope || 'private')) throw new ScopeViolation(); return result })

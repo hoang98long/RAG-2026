@@ -1,4 +1,4 @@
-"""Server-side model routing. OpenAI has no tools, history or private-store access."""
+"""Server-side OpenAI routing without tools, stored conversation IDs or private-store access."""
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage
 from app.core.config import get_settings
@@ -21,6 +21,27 @@ def validate_selection(model: str, scope: str):
 def assert_public_sources(sources: list[dict]):
     if any(source.get('scope') != 'public' for source in sources):
         raise HTTPException(403, 'Đã chặn gửi nguồn không thuộc kho public tới OpenAI')
+
+
+def provider_error(exc: Exception) -> HTTPException:
+    """Return safe, actionable errors without provider payloads or credentials."""
+    from openai import APIStatusError, APITimeoutError, APIConnectionError
+    if isinstance(exc, APIStatusError):
+        code = exc.body.get('code') if isinstance(exc.body, dict) else None
+        if code == 'credit_balance_exhausted':
+            return HTTPException(503, 'OpenAI đã hết credit API. Quản trị viên cần bổ sung credit trước khi sử dụng.')
+        if code in {'insufficient_quota', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded',
+                    'organization_usage_limit_exceeded'}:
+            return HTTPException(503, 'OpenAI đã chạm hạn mức API. Quản trị viên cần kiểm tra billing và giới hạn sử dụng.')
+        if exc.status_code == 429:
+            return HTTPException(429, 'OpenAI đang giới hạn số yêu cầu. Vui lòng chờ rồi thử lại.', headers={'Retry-After': '10'})
+        if exc.status_code in {401, 403}:
+            return HTTPException(503, 'OpenAI key hoặc quyền truy cập mô hình chưa hợp lệ. Vui lòng liên hệ quản trị viên.')
+    if isinstance(exc, APITimeoutError):
+        return HTTPException(504, 'OpenAI phản hồi quá lâu. Vui lòng thử lại.')
+    if isinstance(exc, APIConnectionError):
+        return HTTPException(503, 'Không kết nối được OpenAI. Vui lòng kiểm tra kết nối mạng của máy chủ.')
+    return HTTPException(502, 'Không thể gọi OpenAI. Kiểm tra key, quyền model, hạn mức và kết nối.')
 
 
 class OpenAIChat:
@@ -49,7 +70,7 @@ class OpenAIChat:
             raise
         except Exception as exc:
             # Do not expose provider payloads, prompts or keys in HTTP errors.
-            raise HTTPException(502, 'Không thể gọi OpenAI. Kiểm tra key, quyền model, hạn mức và kết nối.') from exc
+            raise provider_error(exc) from exc
 
     def with_structured_output(self, schema, **kwargs):
         owner = self
@@ -62,5 +83,5 @@ class OpenAIChat:
                         raise ValueError('Missing structured response')
                     return result.output_parsed
                 except Exception as exc:
-                    raise HTTPException(502, 'OpenAI chưa trả được kết quả có cấu trúc hợp lệ') from exc
+                    raise provider_error(exc) from exc
         return Structured()

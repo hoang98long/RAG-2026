@@ -61,7 +61,7 @@ const { validateSources } = await moduleFrom('../src/utils/scope.ts')
 const sourcesCode = ts.transpileModule(readFileSync(new URL('../src/utils/sources.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText
 const sourcesModuleUrl = `data:text/javascript;base64,${Buffer.from(sourcesCode).toString('base64')}`
 const linksCode = ts.transpileModule(readFileSync(new URL('../src/utils/answerLinks.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText.replace("from './sources'", `from '${sourcesModuleUrl}'`)
-const { allowedAnswerLink } = await import(`data:text/javascript;base64,${Buffer.from(linksCode).toString('base64')}`)
+const { allowedAnswerLink, allowedDirectLink } = await import(`data:text/javascript;base64,${Buffer.from(linksCode).toString('base64')}`)
 
 test('public source decoder rejects private, missing-scope and malformed passages', () => {
   const publicSource = { scope: 'public', document: 'P.pdf', content: 'Public fact' }
@@ -78,6 +78,16 @@ test('generated answer links only open a matching source on the application orig
   assert.equal(allowedAnswerLink('/documents/p?chunk=0&scope=public', sources, origin), origin+'/documents/p?chunk=0&scope=public')
   for (const url of ['/documents/secret?scope=private', '/documents/p?chunk=0&scope=private', 'https://evil.example/collect', 'javascript:alert(1)', '//evil.example/documents/p', '/documents/p?chunk=0&scope=public&secret=extra']) {
     assert.equal(allowedAnswerLink(url, sources, origin), undefined)
+  }
+})
+
+
+test('direct chat allows normal web links while blocking executable, credential and app links', () => {
+  const origin = 'https://documents.example'
+  assert.equal(allowedDirectLink('https://developers.openai.com/api/docs', origin), 'https://developers.openai.com/api/docs')
+  for (const href of ['javascript:alert(1)', 'data:text/html,secret', '/documents/private?scope=private',
+                      origin+'/api/documents/id/file', '//evil.example/collect', 'https://user:pass@example.com']) {
+    assert.equal(allowedDirectLink(href, origin), undefined, href)
   }
 })
 

@@ -13,7 +13,7 @@ class UploadBodyLimitMiddleware:
         path = scope['path'].rstrip('/')
         if path == '/documents/upload':
             max_bytes = self.max_bytes
-        elif path in {'/chat','/report'}:
+        elif path in {'/chat','/chat/direct','/report'}:
             max_bytes = 64 * 1024
         elif path in {'/auth/login','/auth/logout'}:
             max_bytes = 16 * 1024

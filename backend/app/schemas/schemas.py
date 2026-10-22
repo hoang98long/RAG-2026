@@ -25,6 +25,35 @@ class ChatRequest(BaseModel):
 
 
 
+class DirectChatMessage(BaseModel):
+    model_config = {'extra': 'forbid'}
+    role: Literal['user', 'assistant']
+    content: str = Field(min_length=1, max_length=12000)
+
+    @field_validator('content')
+    @classmethod
+    def meaningful_content(cls, value):
+        if not value.strip():
+            raise ValueError('Message must contain text')
+        return value.strip()
+
+
+class DirectChatRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    messages: list[DirectChatMessage] = Field(min_length=1, max_length=21)
+
+    @field_validator('messages')
+    @classmethod
+    def bounded_conversation(cls, messages):
+        if len(messages) % 2 != 1 or any(
+                item.role != ('user' if index % 2 == 0 else 'assistant')
+                for index, item in enumerate(messages)):
+            raise ValueError('Conversation must alternate user/assistant and end with a user message')
+        if sum(len(item.content.encode('utf-8')) for item in messages) > 48000:
+            raise ValueError('Conversation exceeds the context size limit')
+        return messages
+
+
 class SourceChunk(BaseModel):
     scope: Literal['private', 'public'] | None = None
     index_version: str | None = None

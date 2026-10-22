@@ -43,6 +43,130 @@ const test = base.extend<{ faults: string[] }>({
   },
 })
 
+
+test('direct OpenAI chat keeps context without RAG, documents or Ollama readiness', async ({ page, context, faults }) => {
+  const requests: any[] = [], reads: string[] = [], checks: string[] = []
+  let ragCalls = 0
+  const reply = 'Xin chào Lan. [S1] [Tham khảo](https://developers.openai.com/api/docs)'
+  await intercept(context, `${API}/auth/session`, route => ok(route, { private_access:false, private_configured:true }))
+  await intercept(context, `${API}/chat/models*`, route => {
+    checks.push(route.request().url())
+    return ok(route, new URL(route.request().url()).searchParams.get('mode') === 'direct'
+      ? [{ id:'openai',label:'OpenAI · gpt-4.1-mini',configured:true,ready:true }]
+      : [{ id:'qwen2.5:7b',label:'Qwen',configured:true,ready:false }, { id:'openai',label:'OpenAI',configured:true,ready:false }])
+  })
+  await intercept(context, `${API}/documents/paged*`, async route => { reads.push(route.request().url()); await route.fallback() })
+  await intercept(context, `${API}/chat`, async route => { ragCalls++; await fail(route, 500, 'RAG must not run') })
+  await intercept(context, `${API}/chat/direct`, async route => {
+    requests.push(route.request().postDataJSON())
+    await wait(200)
+    await ok(route, { answer:requests.length === 1 ? reply : 'Tên bạn là Lan.',sources:[],mode:'direct',model:'openai' })
+  })
+  await page.goto('/chat')
+  await expect(page.getByRole('link', { name:'public.pdf',exact:true })).toBeVisible()
+  const initialReads = reads.length
+  await page.getByLabel('Chế độ hỏi đáp').selectOption('direct')
+  await expect(page.getByRole('heading', { name:'Chat trực tiếp với OpenAI',exact:true })).toBeVisible()
+  await expect(page.getByLabel('Nguồn tài liệu')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name:'Nguồn truy xuất',exact:true })).toHaveCount(0)
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('Tên tôi là Lan.')
+  await expect(page.getByRole('button', { name:'Gửi',exact:true })).toBeEnabled()
+  await page.locator('form').evaluate(form => { form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})); form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})) })
+  await expect(page.locator('article').first()).toContainText('Xin chào Lan. [S1]')
+  await expect(page.getByRole('link', { name:'Tham khảo',exact:true })).toHaveAttribute('href','https://developers.openai.com/api/docs')
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('Tên tôi là gì?')
+  await page.getByRole('button', { name:'Gửi',exact:true }).click()
+  await expect(page.locator('article').last()).toContainText('Tên bạn là Lan.')
+  expect(requests).toEqual([
+    {messages:[{role:'user',content:'Tên tôi là Lan.'}]},
+    {messages:[{role:'user',content:'Tên tôi là Lan.'},{role:'assistant',content:reply},{role:'user',content:'Tên tôi là gì?'}]},
+  ])
+  expect(ragCalls).toBe(0)
+  expect(reads.length).toBe(initialReads)
+  expect(checks.some(url => new URL(url).searchParams.get('mode') === 'direct')).toBe(true)
+})
+
+test('switching from private RAG to direct chat clears private content and new chat resets history', async ({ page, context, faults }) => {
+  const requests: any[] = []
+  await intercept(context, `${API}/chat`, route => ok(route, {answer:'PRIVATE_RAG_CANARY',sources:[],coverage}))
+  await intercept(context, `${API}/chat/models?mode=direct`, route => ok(route,[{id:'openai',label:'OpenAI',configured:true,ready:true}]))
+  await intercept(context, `${API}/chat/direct`, async route => {
+    requests.push(route.request().postDataJSON())
+    await ok(route,{answer:'Direct reply',sources:[],mode:'direct',model:'openai'})
+  })
+  await page.goto('/chat')
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('PRIVATE_QUESTION_CANARY')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('PRIVATE_RAG_CANARY')
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('PRIVATE_DRAFT_CANARY')
+  await page.getByLabel('Chế độ hỏi đáp').selectOption('direct')
+  await expect(page.locator('article')).toHaveCount(0)
+  await expect(page.getByPlaceholder('Nhập tin nhắn cho OpenAI...')).toHaveValue('')
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('Hello')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('Direct reply')
+  await page.getByRole('button',{name:'Cuộc trò chuyện mới',exact:true}).click()
+  await expect(page.locator('article')).toHaveCount(0)
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('New conversation')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('Direct reply')
+  expect(requests).toEqual([
+    {messages:[{role:'user',content:'Hello'}]},
+    {messages:[{role:'user',content:'New conversation'}]},
+  ])
+  expect(JSON.stringify(requests)).not.toContain('PRIVATE_')
+  await page.getByLabel('Chế độ hỏi đáp').selectOption('rag')
+  await expect(page.getByLabel('Mô hình trả lời')).toHaveValue('qwen2.5:7b')
+  await expect(page.getByLabel('Nguồn tài liệu')).toHaveValue('public')
+  await expect(page.locator('article')).toHaveCount(0)
+})
+
+test('direct chat preserves a failed question and excludes provider errors from follow-up context', async ({ page, context, faults }) => {
+  const requests: any[] = []
+  await intercept(context, `${API}/chat/models?mode=direct`, route => ok(route,[{id:'openai',label:'OpenAI',configured:true,ready:true}]))
+  await intercept(context, `${API}/chat/direct`, async route => {
+    requests.push(route.request().postDataJSON())
+    if (requests.length === 1) return fail(route,503,'OpenAI đã hết credit API.')
+    await ok(route,{answer:'Successful reply',sources:[],mode:'direct',model:'openai'})
+  })
+  await page.goto('/chat')
+  await page.getByLabel('Chế độ hỏi đáp').selectOption('direct')
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('Hello')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article').last()).toContainText('hết credit API')
+  await expect(page.getByPlaceholder('Nhập tin nhắn cho OpenAI...')).toHaveValue('Hello')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article').last()).toContainText('Successful reply')
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('Continue')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.getByPlaceholder('Nhập tin nhắn cho OpenAI...')).toHaveValue('')
+  await expect(page.locator('article')).toHaveCount(3)
+  expect(requests[1]).toEqual({messages:[{role:'user',content:'Hello'}]})
+  expect(requests[2]).toEqual({messages:[{role:'user',content:'Hello'},{role:'assistant',content:'Successful reply'},{role:'user',content:'Continue'}]})
+  expect(JSON.stringify(requests)).not.toContain('credit')
+})
+
+test('direct chat blocks missing API key and restores the draft after readiness recovery', async ({ page, context, faults }) => {
+  let ready = false, calls = 0
+  await intercept(context, `${API}/chat/models?mode=direct`, route => ok(route,[
+    {id:'openai',label:'OpenAI',configured:ready,ready,message:'Máy chủ chưa cấu hình OpenAI API key.'},
+  ]))
+  await intercept(context, `${API}/chat/direct`, async route => { calls++; await ok(route,{answer:'Ready',sources:[],mode:'direct',model:'openai'}) })
+  await page.goto('/chat')
+  await page.getByLabel('Chế độ hỏi đáp').selectOption('direct')
+  await expect(page.getByRole('alert')).toContainText('chưa cấu hình OpenAI')
+  await page.getByPlaceholder('Nhập tin nhắn cho OpenAI...').fill('Keep this draft')
+  await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeDisabled()
+  await page.locator('form').evaluate(form => form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})))
+  expect(calls).toBe(0)
+  ready = true
+  await page.getByRole('button',{name:'Kiểm tra lại',exact:true}).click()
+  await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeEnabled()
+  await expect(page.getByPlaceholder('Nhập tin nhắn cho OpenAI...')).toHaveValue('Keep this draft')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('Ready')
+})
+
 test('chat submits once, keeps default model, hides codes and opens exact public source', async ({ page, context, faults }) => {
   const requests: unknown[] = []
   await intercept(context, `${API}/chat`, async route => { requests.push(route.request().postDataJSON()); await wait(200); await ok(route, { answer: 'Bảo hành 24 tháng [S1, S2].', sources, coverage }) })
@@ -250,6 +374,35 @@ test('background upload banner leaves the desktop chat input inside the viewport
   await expect(page.getByRole('status').filter({ hasText: 'Đang tải và xử lý tài liệu' })).toHaveCount(0)
   const bounds = await page.getByRole('button', { name: 'Gửi', exact: true }).boundingBox()
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(900)
+})
+
+test('anonymous chat uses hosted Qwen with public sources when OpenAI has no key', async ({ page, context, faults }) => {
+  const reads: string[] = []
+  const requests: unknown[] = []
+  await intercept(context, `${API}/auth/session`, route => ok(route, { private_access: false, private_configured: true }))
+  await intercept(context, `${API}/chat/models`, route => ok(route, [
+    { id: 'qwen2.5:7b', label: 'Qwen 2.5 · 7B (local)', configured: true, ready: true },
+    { id: 'llama3.1:70b', label: 'Llama 3.1 · 70B (local)', configured: true, ready: false },
+    { id: 'openai', label: 'OpenAI', configured: false, ready: false },
+  ]))
+  await intercept(context, `${API}/documents/paged*`, async route => { reads.push(route.request().url()); await route.fallback() })
+  await intercept(context, `${API}/chat`, async route => {
+    requests.push(route.request().postDataJSON())
+    await ok(route, { answer: 'Bảo hành 24 tháng [S1].', sources, coverage })
+  })
+  await page.goto('/chat')
+  await expect(page.getByLabel('Mô hình trả lời')).toHaveValue('qwen2.5:7b')
+  await expect(page.getByLabel('Mô hình trả lời').locator('option[value="openai"]')).toHaveJSProperty('disabled', true)
+  await expect(page.getByLabel('Nguồn tài liệu')).toHaveValue('public')
+  await expect(page.getByLabel('Nguồn tài liệu')).toBeDisabled()
+  await expect(page.getByText('Mô hình chạy qua Ollama trên máy chủ, chỉ sử dụng tài liệu public và không cần OpenAI API key.')).toBeVisible()
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Thời hạn bảo hành?')
+  await page.getByRole('button', { name: 'Gửi', exact: true }).click()
+  await expect(page.locator('article')).toContainText('Bảo hành 24 tháng')
+  expect(requests).toEqual([{ question: 'Thời hạn bảo hành?', model: 'qwen2.5:7b', scope: 'public' }])
+  expect(reads.length).toBeGreaterThan(0)
+  expect(reads.every(url => new URL(url).searchParams.get('scope') === 'public')).toBe(true)
+  await expect(page.getByRole('link', { name: /public.pdf.*Trang 7.*Đoạn 54/ }).first()).toHaveAttribute('href', /scope=public/)
 })
 
 test('anonymous users only see public and cannot navigate to management actions', async ({ page, context, faults }) => {

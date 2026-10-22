@@ -2,7 +2,29 @@
 
 Thay đổi này xử lý các điểm ghi nhận trong `note.docx`: thiếu bằng chứng ở trang khác, thiếu mục trong danh sách, chưa nối được nhiều văn bản, khó truy xuất theo cách diễn đạt đời thường và dẫn nguồn lệch. Chưa có bộ tài liệu/câu hỏi chuẩn đầy đủ để xác nhận tất cả trường hợp thực tế đã được giải quyết.
 
+## Chat trực tiếp, không RAG
+
+Trong trang Hỏi đáp, chọn **Chat trực tiếp với OpenAI**. Backend dùng model/key hiện có, không đọc kho public/private, lịch sử DB, vector, Ollama, embedding, planner, reranker hoặc reviewer. Giao diện ẩn danh mục/nguồn; khách chưa đăng nhập vẫn dùng được trong hạn mức public.
+
+- `GET /chat/models?mode=direct`: chỉ kiểm tra key đã cấu hình, không probe Ollama/DB. `GET /chat/models` giữ trạng thái cho RAG.
+- `POST /chat/direct`: chỉ nhận `messages` gồm `role=user|assistant` và `content`. Không nhận scope, model tùy ý, system/developer/tool, tools, database URL hay conversation ID. Model lấy từ backend.
+- Hội thoại bắt đầu/kết thúc bằng user, luân phiên user/assistant; tối đa 21 tin nhắn, mỗi tin 12.000 ký tự, tổng nội dung UTF-8 tối đa 48.000 byte. Body JSON tối đa 64 KiB kể cả request chunked; dùng chung hạn mức public chat.
+- Frontend chỉ gửi các lượt chat trực tiếp thành công, tối đa 10 cặp gần nhất cùng tin nhắn mới; giới hạn thêm kích thước JSON. Bỏ nguyên cặp cũ và thông báo khi lược lịch sử; không tự tóm tắt bằng model.
+- Lịch sử chỉ ở bộ nhớ trang, không lưu DB/localStorage. Chuyển chế độ/model/kho, đăng xuất hoặc bắt đầu cuộc trò chuyện mới xóa hội thoại/bản nháp. Nội dung RAG nội bộ không tự gửi sang OpenAI; lỗi API không được dùng làm lịch sử.
+- Payload chỉ có system prompt do server kiểm soát và hội thoại người dùng, `store=False`; không tools, previous_response_id, conversation hay file/vector ID. Câu trả lời không qua kiểm chứng bằng chứng RAG.
+- Không tự tải ảnh Markdown. Cho mở link web HTTP(S) không có thông tin đăng nhập; chặn protocol thực thi, đường dẫn tương đối và link ứng dụng. RAG vẫn chỉ mở link khớp nguồn.
+
+Ví dụ body:
+
+```json
+{"messages":[{"role":"user","content":"Tên tôi là Lan."},{"role":"assistant","content":"Chào Lan."},{"role":"user","content":"Tên tôi là gì?"}]}
+```
+
+Thiết kế dựa theo [OpenAI Docs về conversation state](https://developers.openai.com/api/docs/guides/conversation-state). Đây là chat văn bản qua API; chưa có browsing, tệp đính kèm hay các công cụ của web ChatGPT. `store=False` không đồng nghĩa Zero Data Retention. API báo riêng lỗi credit, quota, rate limit, key/quyền model và kết nối; không trả payload lỗi/key từ nhà cung cấp.
+
 ## Quy tắc dữ liệu
+
+Phần dưới áp dụng cho chế độ **Hỏi đáp tài liệu (RAG)**.
 
 | Mô hình chat | Kho nội bộ | Kho public | Gửi bằng chứng qua OpenAI |
 | --- | --- | --- | --- |
@@ -10,11 +32,13 @@ Thay đổi này xử lý các điểm ghi nhận trong `note.docx`: thiếu b�
 | `llama3.1:70b` | Có | Có | Không |
 | `openai` (model theo `OPENAI_MODEL`) | Bị chặn | Có | Chỉ bằng chứng public |
 
-Local chọn nội bộ, public hoặc cả hai. OpenAI chỉ chấp nhận `scope=public`; yêu cầu `private` hoặc `all` bị backend trả 403 trước khi mở chỉ mục hay gọi model. Không có fallback từ OpenAI sang kho nội bộ. Không cấu hình key trả 503; lỗi gọi API trả 502 với thông báo không chứa key/prompt.
+**Chat public dùng được với `qwen2.5:7b` qua Ollama mà không cần đăng nhập nội bộ hay cấu hình OpenAI key.** Đây là mô hình mặc định trên giao diện; khách chưa đăng nhập luôn dùng `scope=public`. Quản trị viên đăng nhập rồi upload vào kho **Public · mô hình local hoặc OpenAI** để cung cấp tài liệu cho luồng này. Không tự chuyển/copy dữ liệu nội bộ sang public.
+
+Trong chế độ RAG, local chọn nội bộ, public hoặc cả hai. OpenAI chỉ chấp nhận `scope=public`; yêu cầu `private` hoặc `all` bị backend trả 403 trước khi mở chỉ mục hay gọi model. Không có fallback từ OpenAI sang kho nội bộ. Không cấu hình key trả 503; lỗi gọi API trả thông báo không chứa key/prompt; phân biệt lỗi credit/quota, rate limit, quyền và kết nối.
 
 - Metadata, lịch sử chat, tệp gốc, vector và lexical index nằm riêng theo kho. Dữ liệu hiện có giữ nguyên là nội bộ; không tự copy, đổi nhãn, xóa hay ingest vào public.
 - API upload/list/view/delete nhận `scope=private|public` (mặc định private). UUID trùng ở hai kho cũng không làm chúng dùng chung dữ liệu. Không có chức năng tự chuyển tài liệu nội bộ sang public.
-- OpenAI được gọi cho lập truy vấn, rerank khi bật reranking, sinh câu trả lời, sửa và kiểm chứng. Mỗi bước có ngữ cảnh chỉ từ kho public. Không đọc lịch sử chat private, không có tool đọc filesystem hoặc truy cập kho nội bộ. Khi đổi mô hình/kho, giao diện bắt đầu cuộc trao đổi mới; hiện chat vẫn xử lý mỗi câu độc lập, không tự gửi lịch sử hội thoại.
+- OpenAI được gọi cho lập truy vấn, rerank khi bật reranking, sinh câu trả lời, sửa và kiểm chứng. Mỗi bước có ngữ cảnh chỉ từ kho public. Không đọc lịch sử chat private, không có tool đọc filesystem hoặc truy cập kho nội bộ. Khi đổi mô hình/kho, giao diện bắt đầu cuộc trao đổi mới; chat RAG xử lý mỗi câu độc lập, không tự gửi lịch sử hội thoại; chat trực tiếp chỉ dùng lịch sử riêng như mô tả phía trên.
 - **Embedding ở cả hai kho vẫn chạy qua Ollama**, bằng model embedding hiện có; public có collection và đường dẫn riêng. Điều này cho phép ingest public khi key trống và cho local dùng vector public mà không gọi OpenAI. Phân hệ độc lập về dữ liệu/LLM; truy xuất vector public hiện vẫn cần dịch vụ embedding Ollama. Không phải phân hệ chỉ cần OpenAI và không cần Ollama.
 - Key chỉ ở backend; endpoint danh sách mô hình chỉ trả trạng thái đã cấu hình và tên model. Không đưa key vào biến `VITE_*`. Câu hỏi bạn nhập khi chọn OpenAI cũng được gửi tới API; không nhập nội dung bí mật vào chế độ này. Tài liệu đã đánh dấu public được coi là được phép dùng qua API.
 - Đây là ranh giới dữ liệu giữa các pipeline, chưa phải cơ chế tài khoản/ACL hay sandbox hệ điều hành riêng. Backend cùng process vẫn có quyền vận hành cả hai kho; nếu cần cách ly process/máy và quyền truy cập của người dùng, cần lớp triển khai/phân quyền tương ứng.

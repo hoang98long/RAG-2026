@@ -1,5 +1,7 @@
 export type Scope = 'private' | 'public'
 export type ChatScope = Scope | 'all'
+export type ChatMode = 'rag' | 'direct'
+export type DirectChatMessage = { role: 'user' | 'assistant'; content: string }
 export type ChatModel = 'qwen2.5:7b' | 'llama3.1:70b' | 'openai'
 export type Coverage = { exhaustive_requested: boolean; truncated: boolean; completeness_unverified: boolean; evidence_chunks: number; query_count: number; query_planning_fallback: boolean }
 export type Document = { id: string; filename: string; upload_time: string; scope?: Scope }
