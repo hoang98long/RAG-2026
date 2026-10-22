@@ -65,8 +65,8 @@ export default function ChatPage() {
     if (pdfInput.current) pdfInput.current.value = ''
   }
   const changeMode = (value: ChatMode) => { if (value === mode) return; setMode(value); setModel(value === 'direct' ? 'openai' : 'qwen2.5:7b'); setScope('public'); resetConversation() }
-  const changeModel = (value: ChatModel) => { setModel(value); if (value === 'openai') setScope('public'); resetConversation() }
-  const changeScope = (value: ChatScope) => { setScope(value); resetConversation() }
+  const changeModel = (value: ChatModel) => { if (value === model) return; setModel(value); if (value === 'openai') setScope('public'); resetConversation() }
+  const changeScope = (value: ChatScope) => { setScope(value); if (value !== 'public' && model === 'openai') setModel('qwen2.5:7b'); resetConversation() }
   useEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight
   }, [messages, loading])
@@ -123,8 +123,8 @@ export default function ChatPage() {
             <button type="button" aria-pressed={mode === 'direct'} disabled={loading} onClick={() => changeMode('direct')} className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition disabled:opacity-50 ${mode === 'direct' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}><MessageSquare size={15} aria-hidden="true"/>Trò chuyện</button>
           </div>
           <div className="flex flex-wrap gap-3">
-            {showModelSelector && <label className="text-xs font-medium text-slate-600">Mô hình trả lời<select className="input mt-1 sm:w-48" value={model} disabled={loading || mode === 'direct'} onChange={event => changeModel(event.target.value as ChatModel)}>{options.map(option => <option key={option.id} value={option.id} disabled={!option.configured}>{option.label}{!option.configured ? ' · chưa cấu hình key' : option.ready === false ? ' · chưa sẵn sàng' : ''}</option>)}</select></label>}
-            {mode === 'rag' && privateAccess && <label className="text-xs font-medium text-slate-600">Nguồn tài liệu<select className="input mt-1 sm:w-44" value={activeScope} disabled={loading || model === 'openai'} onChange={event => changeScope(event.target.value as ChatScope)}><option value="private">Nội bộ</option><option value="public">Công khai</option><option value="all">Tất cả tài liệu</option></select></label>}
+            {mode === 'rag' && activeScope === 'public' ? <label className="text-xs font-medium text-slate-600">Trả lời bằng<select className="input mt-1 sm:w-48" value={model} disabled={loading} onChange={event => changeModel(event.target.value as ChatModel)}>{options.filter(option => option.id !== 'llama3.1:70b' || showModelSelector).map(option => <option key={option.id} value={option.id} disabled={!option.configured}>{option.id === 'openai' ? 'OpenAI' : option.id === 'qwen2.5:7b' ? 'Qwen (máy chủ)' : option.label}{!option.configured || option.ready === false ? ' · chưa sẵn sàng' : ''}</option>)}</select></label> : showModelSelector && <label className="text-xs font-medium text-slate-600">Mô hình trả lời<select className="input mt-1 sm:w-48" value={model} disabled={loading || mode === 'direct'} onChange={event => changeModel(event.target.value as ChatModel)}>{options.map(option => <option key={option.id} value={option.id} disabled={!option.configured}>{option.label}{!option.configured ? ' · chưa cấu hình key' : option.ready === false ? ' · chưa sẵn sàng' : ''}</option>)}</select></label>}
+            {mode === 'rag' && privateAccess && <label className="text-xs font-medium text-slate-600">Nguồn tài liệu<select className="input mt-1 sm:w-44" value={activeScope} disabled={loading} onChange={event => changeScope(event.target.value as ChatScope)}><option value="private">Nội bộ</option><option value="public">Công khai</option><option value="all">Tất cả tài liệu</option></select></label>}
           </div>
         </div>
         {modelsUnavailable && <div role="alert" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">Tạm thời chưa thể trả lời. Vui lòng thử lại sau.<button className="ml-2 font-semibold underline disabled:opacity-50" disabled={checkingModels} onClick={() => void retryModels()}>{checkingModels ? 'Đang thử lại...' : 'Thử lại'}</button></div>}

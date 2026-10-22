@@ -4,7 +4,7 @@ Thay đổi này xử lý các điểm ghi nhận trong `note.docx`: thiếu b�
 
 ## Chat trực tiếp, không RAG
 
-Trong trang Hỏi đáp, chọn **Trò chuyện**; **Hỏi tài liệu** là chế độ RAG. Backend dùng `OPENAI_CHAT_MODEL` (mặc định `gpt-6-luna`) và `OPENAI_API_KEY`, độc lập với model RAG trong `OPENAI_MODEL`, không đọc kho public/private, lịch sử DB, vector, Ollama, embedding, planner, reranker hoặc reviewer. Giao diện ẩn danh mục/nguồn; khách chưa đăng nhập vẫn dùng được trong hạn mức public. Tên model và mô tả kỹ thuật không hiển thị trong giao diện mặc định. Bộ chọn mô hình trên chat/báo cáo được ẩn; `VITE_SHOW_MODEL_SELECTOR=true` trong `frontend/.env` chỉ dùng khi cần hiện lại để kiểm thử, cần khởi động lại Vite/build lại sau khi đổi.
+Trong trang Hỏi đáp, chọn **Trò chuyện**; **Hỏi tài liệu** là chế độ RAG. Backend dùng `OPENAI_CHAT_MODEL` (mặc định `gpt-6-luna`) và `OPENAI_API_KEY`, độc lập với model RAG trong `OPENAI_MODEL`, không đọc kho public/private, lịch sử DB, vector, Ollama, embedding, planner, reranker hoặc reviewer. Giao diện ẩn danh mục/nguồn; khách chưa đăng nhập vẫn dùng được trong hạn mức public. Tên model và mô tả kỹ thuật không hiển thị trong giao diện mặc định. Bộ chọn mô hình chi tiết trên chat/báo cáo được ẩn; `VITE_SHOW_MODEL_SELECTOR=true` trong `frontend/.env` chỉ dùng khi cần hiện lại để kiểm thử, cần khởi động lại Vite/build lại sau khi đổi.
 
 - `GET /chat/models?mode=direct`: chỉ kiểm tra key đã cấu hình, không probe Ollama/DB. `GET /chat/models` giữ trạng thái cho RAG.
 - `POST /chat/direct`: chỉ nhận `messages` gồm `role=user|assistant` và `content`. Không nhận scope, model tùy ý, system/developer/tool, tools, database URL hay conversation ID. Model lấy từ backend.
@@ -48,6 +48,10 @@ Phần dưới áp dụng cho chế độ **Hỏi đáp tài liệu (RAG)**.
 | `openai` (model theo `OPENAI_MODEL`) | Bị chặn | Có | Chỉ bằng chứng public |
 
 **Chat public dùng được với `qwen2.5:7b` qua Ollama mà không cần đăng nhập nội bộ hay cấu hình OpenAI key.** Đây là mô hình mặc định cho mục **Hỏi tài liệu**; khách chưa đăng nhập luôn dùng `scope=public`. Quản trị viên đăng nhập rồi upload vào kho **Public · mô hình local hoặc OpenAI** để cung cấp tài liệu cho luồng này. Không tự chuyển/copy dữ liệu nội bộ sang public.
+
+Trong **Hỏi tài liệu**, chọn kho **Công khai** rồi chọn **Trả lời bằng → Qwen (máy chủ)** hoặc **OpenAI**. Khách chưa đăng nhập luôn ở kho Công khai và cũng thấy lựa chọn này; không cần bật `VITE_SHOW_MODEL_SELECTOR`. OpenAI dùng `OPENAI_MODEL`, độc lập với `OPENAI_CHAT_MODEL` của Trò chuyện. Chưa có key thì lựa chọn OpenAI bị vô hiệu hóa. Khi đang dùng OpenAI mà chuyển về Nội bộ/Tất cả, UI xóa hội thoại và dùng lại Qwen; backend vẫn chặn OpenAI với private/all.
+
+Tài liệu public được trích chữ/chia đoạn, embedding bằng `EMBEDDING_MODEL` local và lưu Chroma/FTS trên máy chủ. Cả Qwen và OpenAI truy xuất cùng kho public này; đổi mô hình trả lời không cần ingest lại. Chỉ cần reindex khi đổi embedding/pipeline/chunking; PDF scan trong luồng ingest vẫn cần OCR. Ingest không huấn luyện Qwen, và tài liệu đã nằm trong kho private không được OpenAI sử dụng. Độ chính xác cần đo trên câu hỏi/tài liệu thực: tìm đúng đoạn, giữ số liệu/điều kiện/phủ định, tổng hợp đủ nguồn và từ chối khi thiếu bằng chứng. Việc dùng API không bảo đảm sửa được lỗi trích chữ hoặc thiếu nguồn truy xuất.
 
 Trong chế độ RAG, local chọn nội bộ, public hoặc cả hai. OpenAI chỉ chấp nhận `scope=public`; yêu cầu `private` hoặc `all` bị backend trả 403 trước khi mở chỉ mục hay gọi model. Không có fallback từ OpenAI sang kho nội bộ. Không cấu hình key trả 503; lỗi gọi API trả thông báo không chứa key/prompt; phân biệt lỗi credit/quota, rate limit, quyền và kết nối.
 

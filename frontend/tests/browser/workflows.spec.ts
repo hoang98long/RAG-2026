@@ -269,6 +269,98 @@ test('direct chat blocks missing API key and restores the draft after readiness 
   await expect(page.locator('article')).toContainText('Ready')
 })
 
+
+test('public document chat switches between Qwen and OpenAI with public sources only', async ({page,context,faults}) => {
+  const requests: any[] = [], scopes: string[] = []
+  await page.setViewportSize({width:390,height:844})
+  await intercept(context,`${API}/auth/session`,route=>ok(route,{private_access:false,private_configured:true}))
+  await intercept(context,`${API}/documents/paged*`,async route=>{
+    scopes.push(new URL(route.request().url()).searchParams.get('scope') || '')
+    await route.fallback()
+  })
+  await intercept(context,`${API}/chat`,async route=>{
+    const payload=route.request().postDataJSON(); requests.push(payload)
+    await wait(150)
+    await ok(route,{answer:`${payload.model === 'openai' ? 'OpenAI' : 'Qwen'}: bảo hành 24 tháng [S1].`,sources,coverage})
+  })
+  await page.goto('/chat')
+  await expect(page.getByLabel('Nguồn tài liệu')).toHaveCount(0)
+  await expect(page.getByLabel('Mô hình trả lời')).toHaveCount(0)
+  await expect(page.getByLabel('Trả lời bằng')).toHaveValue('qwen2.5:7b')
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Bảo hành bao lâu?')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('Qwen: bảo hành 24 tháng')
+  await page.getByLabel('Trả lời bằng').selectOption('openai')
+  await expect(page.locator('article')).toHaveCount(0)
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Thời hạn bảo hành?')
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.getByLabel('Trả lời bằng')).toBeDisabled()
+  await expect(page.locator('article')).toContainText('OpenAI: bảo hành 24 tháng')
+  await expect(page.locator('article')).not.toContainText('[S1]')
+  await expect(page.getByRole('link',{name:/public.pdf.*Trang 7.*Đoạn 54/}).first()).toHaveAttribute('href',/scope=public/)
+  expect(requests).toEqual([
+    {question:'Bảo hành bao lâu?',model:'qwen2.5:7b',scope:'public'},
+    {question:'Thời hạn bảo hành?',model:'openai',scope:'public'},
+  ])
+  expect(scopes.length).toBeGreaterThan(0)
+  expect(scopes.every(scope=>scope === 'public')).toBe(true)
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({path:'test-results/public-openai-mobile.png',fullPage:true})
+})
+
+test('public OpenAI retrieval remains selectable when the local Qwen model is unavailable', async ({page,context,faults}) => {
+  const requests: any[] = []
+  await intercept(context,`${API}/auth/session`,route=>ok(route,{private_access:false,private_configured:true}))
+  await intercept(context,`${API}/chat/models*`,route=>ok(route,[
+    {id:'qwen2.5:7b',label:'Qwen',configured:true,ready:false},
+    {id:'openai',label:'OpenAI',configured:true,ready:true},
+  ]))
+  await intercept(context,`${API}/chat`,route=>{
+    requests.push(route.request().postDataJSON())
+    return ok(route,{answer:'Trả lời từ nguồn công khai [S1].',sources,coverage})
+  })
+  await page.goto('/chat')
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Nội dung tài liệu?')
+  await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeDisabled()
+  await page.getByLabel('Trả lời bằng').selectOption('openai')
+  await expect(page.getByPlaceholder('Đặt câu hỏi về tài liệu...')).toHaveValue('')
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Nội dung tài liệu?')
+  await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeEnabled()
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('Trả lời từ nguồn công khai')
+  expect(requests).toEqual([{question:'Nội dung tài liệu?',model:'openai',scope:'public'}])
+})
+
+test('leaving public OpenAI for internal scopes starts a new Qwen conversation', async ({page,context,faults}) => {
+  const requests: any[] = []
+  await intercept(context,`${API}/chat`,route=>{
+    const payload=route.request().postDataJSON();requests.push(payload)
+    return ok(route,{answer:payload.scope === 'public' ? 'PUBLIC_REPLY' : 'PRIVATE_REPLY',sources:[],coverage})
+  })
+  await page.goto('/chat')
+  await expect(page.getByLabel('Trả lời bằng')).toHaveCount(0)
+  for (const scope of ['private','all']) {
+    await page.getByLabel('Nguồn tài liệu').selectOption('public')
+    await page.getByLabel('Trả lời bằng').selectOption('openai')
+    await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Public question')
+    await page.getByRole('button',{name:'Gửi',exact:true}).click()
+    await expect(page.locator('article')).toContainText('PUBLIC_REPLY')
+    await expect(page.getByLabel('Nguồn tài liệu')).toBeEnabled()
+    await page.getByLabel('Nguồn tài liệu').selectOption(scope)
+    await expect(page.getByLabel('Trả lời bằng')).toHaveCount(0)
+    await expect(page.locator('article')).toHaveCount(0)
+    await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Internal question')
+    await page.getByRole('button',{name:'Gửi',exact:true}).click()
+    await expect(page.locator('article')).toContainText('PRIVATE_REPLY')
+  }
+  expect(requests).toEqual([
+    {question:'Public question',model:'openai',scope:'public'},
+    {question:'Internal question',model:'qwen2.5:7b',scope:'private'},
+    {question:'Public question',model:'openai',scope:'public'},
+    {question:'Internal question',model:'qwen2.5:7b',scope:'all'},
+  ])
+})
+
 test('chat submits once, keeps default model, hides codes and opens exact public source', async ({ page, context, faults }) => {
   const requests: unknown[] = []
   await intercept(context, `${API}/chat`, async route => { requests.push(route.request().postDataJSON()); await wait(200); await ok(route, { answer: 'Bảo hành 24 tháng [S1, S2].', sources, coverage }) })
@@ -497,7 +589,9 @@ test('anonymous chat uses hosted Qwen with public sources when OpenAI has no key
   await page.goto('/chat')
   await expect(page.getByLabel('Mô hình trả lời')).toHaveCount(0)
   await expect(page.getByLabel('Nguồn tài liệu')).toHaveCount(0)
-  await expect(page.locator('.chat-panel')).not.toContainText(/Ollama|OpenAI|RAG|API key|qwen2/)
+  await expect(page.locator('.chat-panel')).not.toContainText(/Ollama|RAG|API key|qwen2/)
+  await expect(page.getByLabel('Trả lời bằng')).toHaveValue('qwen2.5:7b')
+  await expect(page.getByLabel('Trả lời bằng').locator('option[value="openai"]')).toHaveAttribute('disabled','')
   await expect(page.getByRole('button', { name:'Hỏi tài liệu',exact:true })).toHaveAttribute('aria-pressed','true')
   await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Thời hạn bảo hành?')
   await page.getByRole('button', { name: 'Gửi', exact: true }).click()

@@ -119,6 +119,46 @@ class AccessSecurityTests(unittest.TestCase):
         self.assertEqual(answer.call_args.kwargs['scope'],'public')
         self.private_factory.assert_not_called()
 
+    def test_anonymous_openai_public_chat_never_opens_private_storage_or_local_llm(self):
+        from pydantic import SecretStr
+        settings = self.settings.model_copy(update={
+            'openai_api_key': SecretStr('TEST_PUBLIC_OPENAI_KEY'), 'grounding_verification': False})
+        source = {'scope': 'public', 'document': 'public.pdf', 'document_id': 'same-id',
+                  'chunk_index': 0, 'content': 'PUBLIC_FACT', 'source_id': 'S1'}
+        evidence = EvidenceResult([source], [source], {'completeness_unverified': False})
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content='PUBLIC_FACT [S1]')
+        with patch('app.services.rag_service.get_settings', return_value=settings), \
+             patch('app.services.model_provider.get_settings', return_value=settings), \
+             patch('app.services.rag_service.OpenAIChat', return_value=llm) as openai, \
+             patch('app.services.rag_service.ChatOllama', side_effect=AssertionError('Local LLM called')), \
+             patch('app.services.rag_service.get_vector_store') as store, \
+             patch('app.services.rag_service.retrieve_evidence', return_value=evidence), \
+             patch('app.services.rag_service.public_session_factory', return_value=self.factories['public']):
+            response = self.client.post('/chat', json={
+                'question': 'What does the public document say?', 'model': 'openai', 'scope': 'public'})
+            self.assertEqual(response.status_code, 200, response.text)
+            data = response.json()['data']
+            self.assertEqual(data['model'], 'openai')
+            self.assertEqual(data['scope'], 'public')
+            self.assertEqual(data['answer'], 'PUBLIC_FACT [S1]')
+            self.assertEqual([item['scope'] for item in data['sources']], ['public'])
+            self.assertNotIn('TEST_PUBLIC_OPENAI_KEY', response.text)
+            for scope in ('private', 'all'):
+                denied = self.client.post('/chat', json={
+                    'question': 'Read private files', 'model': 'openai', 'scope': scope})
+                self.assertEqual(denied.status_code, 401, denied.text)
+        openai.assert_called_once_with()
+        store.assert_called_once_with('public')
+        self.private_factory.assert_not_called()
+        prompt = llm.invoke.call_args.args[0][-1].content
+        self.assertIn('PUBLIC_FACT', prompt)
+        self.assertNotIn('PRIVATE_CANARY', prompt)
+        with self.factories['public']() as db:
+            self.assertEqual(len(db.scalars(select(ChatHistory)).all()), 1)
+        with self.factories['private']() as db:
+            self.assertEqual(len(db.scalars(select(ChatHistory)).all()), 0)
+
     def test_anonymous_qwen_answers_from_public_without_openai_or_private_storage(self):
         settings = self.settings.model_copy(update={'grounding_verification': False})
         self.assertFalse(settings.openai_api_key.get_secret_value())
