@@ -91,6 +91,37 @@ Nếu cần rollback: dừng tiến trình ghi, dùng bản code/image đã ghi 
 
 Tham chiếu triển khai: [Docker Compose healthcheck và restart](https://docs.docker.com/reference/compose-file/services/), [Nginx proxy_pass, rewrite và resolver](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass), [Ollama inventory API](https://docs.ollama.com/api/tags).
 
+## Chuyển máy: OpenAI chưa nhận key và thiếu embedding
+
+`GET /chat/models` trả HTTP 200 chỉ xác nhận endpoint hoạt động; kiểm tra `ready`/`reason` của từng lựa chọn. Endpoint này không thử gọi OpenAI, nên `api_key_missing` có nghĩa backend chưa nhận key, không phải key bị từ chối hoặc hết credit.
+
+- Chạy Uvicorn từ thư mục `backend`: ứng dụng đọc `backend/.env`. Compose đọc `.env` gốc. Cả hai tệp đều bị Git ignore; pull code sang máy khác không chuyển key. Sửa tệp trên chính máy triển khai, giữ đường dẫn dữ liệu và khởi động lại process backend sau khi đổi cấu hình. Biến môi trường của process có độ ưu tiên cao hơn `.env`.
+- `embedding_missing`: Ollama trả được danh sách model nhưng chưa có đúng `EMBEDDING_MODEL` đang cấu hình. Dùng lại model embedding của kho đã ingest; không đổi sang model khác chỉ để hết cảnh báo, vì cần reindex khi đổi embedding. Mẫu hiện dùng `qwen3-embedding:0.6b`.
+- **Hỏi tài liệu** bằng OpenAI vẫn cần embedding local để truy xuất public; không cần LLM Qwen được tải để sinh câu trả lời qua OpenAI. **Trò chuyện** (kể cả PDF đính kèm trực tiếp) không cần Ollama/embedding.
+- Giao diện hiển thị thông báo theo mã lỗi đã biết. Người đăng nhập nội bộ thấy gợi ý cấu hình; khách chỉ thấy thông báo ngắn, không nhận nội dung chẩn đoán tùy ý hoặc key từ nhà cung cấp.
+
+Trong terminal đang chạy backend, kiểm tra cấu hình mà không in key:
+
+```powershell
+python -c "from app.core.config import get_settings; s=get_settings(); print('OpenAI key configured:',bool(s.openai_api_key.get_secret_value().strip())); print('Embedding model:',s.embedding_model)"
+ollama list
+# Chỉ dùng tên này nếu EMBEDDING_MODEL hiện tại cũng là qwen3-embedding:0.6b:
+ollama pull qwen3-embedding:0.6b
+# Nếu muốn sinh câu trả lời bằng Qwen local:
+ollama pull qwen2.5:7b
+```
+
+Dừng Uvicorn bằng Ctrl+C rồi chạy lại từ `backend`, sau đó kiểm tra:
+
+```powershell
+python -m uvicorn app.main:app --reload
+# Chạy ở terminal PowerShell khác:
+(Invoke-RestMethod http://127.0.0.1:8000/chat/models).data | Select-Object id,ready,reason | Format-Table -AutoSize
+(Invoke-RestMethod 'http://127.0.0.1:8000/chat/models?mode=direct').data | Select-Object id,ready,reason | Format-Table -AutoSize
+```
+
+OpenAI ở luồng tài liệu cần `ready=True, reason=api_configured`. Trạng thái này xác nhận key được cấu hình và embedding sẵn sàng; quyền/hạn mức API được kiểm tra khi gửi câu hỏi. Nếu UI chưa có **Trả lời bằng → Qwen / OpenAI** trong kho Công khai, kiểm tra đã pull code mới, khởi động lại Vite hoặc build/cập nhật frontend rồi tải lại trang. Không cần ingest lại hoặc sao chép DB để xử lý hai lỗi cấu hình này.
+
 ## Kết quả kiểm chứng tại workspace (20/10/2026)
 
 - 131 kiểm thử backend, 14 kiểm thử tiện ích frontend và 22 kịch bản Edge đạt; build frontend production thành công.

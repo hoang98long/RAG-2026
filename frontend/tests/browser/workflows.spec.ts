@@ -251,12 +251,14 @@ test('direct chat preserves a failed question and excludes provider errors from 
 test('direct chat blocks missing API key and restores the draft after readiness recovery', async ({ page, context, faults }) => {
   let ready = false, calls = 0
   await intercept(context, `${API}/chat/models?mode=direct`, route => ok(route,[
-    {id:'openai',label:'OpenAI',configured:ready,ready,message:'Máy chủ chưa cấu hình OpenAI API key.'},
+    {id:'openai',label:'OpenAI',configured:ready,ready,reason:ready ? 'api_configured' : 'api_key_missing',message:'SECRET_PROVIDER_PAYLOAD'},
   ]))
   await intercept(context, `${API}/chat/direct`, async route => { calls++; await ok(route,{answer:'Ready',sources:[],mode:'direct',model:'openai'}) })
   await page.goto('/chat')
   await page.getByRole('button', { name:'Trò chuyện', exact:true }).click()
-  await expect(page.getByRole('alert')).toContainText('Tạm thời chưa thể trả lời')
+  await expect(page.getByRole('alert')).toContainText('OPENAI_API_KEY')
+  await expect(page.getByRole('alert')).toContainText('.env')
+  await expect(page.locator('.chat-panel')).not.toContainText('SECRET_PROVIDER_PAYLOAD')
   await page.getByPlaceholder('Nhập tin nhắn...').fill('Keep this draft')
   await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeDisabled()
   await page.locator('form').evaluate(form => form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})))
@@ -269,6 +271,31 @@ test('direct chat blocks missing API key and restores the draft after readiness 
   await expect(page.locator('article')).toContainText('Ready')
 })
 
+
+
+test('missing local embedding blocks public RAG but does not block direct OpenAI chat', async ({page,context,faults}) => {
+  let ragCalls=0
+  await intercept(context,`${API}/auth/session`,route=>ok(route,{private_access:false,private_configured:true}))
+  await intercept(context,`${API}/chat/models*`,route=>ok(route,
+    new URL(route.request().url()).searchParams.get('mode') === 'direct'
+      ? [{id:'openai',label:'OpenAI',configured:true,ready:true,reason:'api_configured'}]
+      : [{id:'qwen2.5:7b',label:'Qwen',configured:true,ready:false,reason:'embedding_missing'},
+         {id:'openai',label:'OpenAI',configured:true,ready:false,reason:'embedding_missing'}]))
+  await intercept(context,`${API}/chat`,async route=>{ragCalls++;await fail(route,500,'Unexpected RAG call')})
+  await intercept(context,`${API}/chat/direct`,route=>ok(route,{answer:'Direct chat ready',sources:[],mode:'direct',model:'openai'}))
+  await page.goto('/chat')
+  await expect(page.getByRole('alert')).toContainText('tìm kiếm tài liệu chưa sẵn sàng')
+  await page.getByLabel('Trả lời bằng').selectOption('openai')
+  await page.getByPlaceholder('Đặt câu hỏi về tài liệu...').fill('Read a document')
+  await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeDisabled()
+  await expect(page.getByRole('alert')).not.toContainText(/embedding|Ollama|OPENAI_API_KEY|\.env/)
+  await page.getByRole('button',{name:'Trò chuyện',exact:true}).click()
+  await page.getByPlaceholder('Nhập tin nhắn...').fill('Hello')
+  await expect(page.getByRole('button',{name:'Gửi',exact:true})).toBeEnabled()
+  await page.getByRole('button',{name:'Gửi',exact:true}).click()
+  await expect(page.locator('article')).toContainText('Direct chat ready')
+  expect(ragCalls).toBe(0)
+})
 
 test('public document chat switches between Qwen and OpenAI with public sources only', async ({page,context,faults}) => {
   const requests: any[] = [], scopes: string[] = []

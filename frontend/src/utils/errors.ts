@@ -18,6 +18,30 @@ export function errorMessage(error: unknown, fallback = 'Không thể hoàn tấ
   return fallback
 }
 
+export function chatReadinessMessage(reason?: string, internalAccess = false): string {
+  // Use only known status codes; never render arbitrary backend/provider diagnostics.
+  switch (reason) {
+    case 'api_key_missing':
+      return internalAccess
+        ? 'OpenAI chưa được cấu hình trên backend. Kiểm tra OPENAI_API_KEY trong tệp .env của backend và khởi động lại dịch vụ.'
+        : 'Cách trả lời này chưa được bật. Vui lòng chọn cách khác hoặc liên hệ quản trị viên.'
+    case 'embedding_missing':
+      return internalAccess
+        ? 'Thiếu mô hình embedding trên Ollama. Tải đúng EMBEDDING_MODEL đang cấu hình rồi thử lại.'
+        : 'Chức năng tìm kiếm tài liệu chưa sẵn sàng. Vui lòng liên hệ quản trị viên.'
+    case 'ollama_unavailable':
+      return internalAccess
+        ? 'Chưa kết nối được Ollama. Kiểm tra dịch vụ và OLLAMA_BASE_URL trên máy chủ.'
+        : 'Dịch vụ tìm kiếm tài liệu chưa kết nối. Vui lòng thử lại sau.'
+    case 'model_missing':
+      return internalAccess
+        ? 'Thiếu mô hình trả lời trên Ollama. Tải đúng mô hình đã chọn rồi thử lại.'
+        : 'Mô hình trả lời này chưa sẵn sàng. Vui lòng chọn cách khác hoặc liên hệ quản trị viên.'
+    default:
+      return 'Tạm thời chưa thể trả lời. Vui lòng thử lại sau.'
+  }
+}
+
 export function chatErrorMessage(error: unknown): string {
   const unavailable = 'Chưa thể nhận câu trả lời lúc này. Vui lòng thử lại sau.'
   if (axios.isAxiosError(error)) {

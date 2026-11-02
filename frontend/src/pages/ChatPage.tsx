@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import axios from 'axios'
-import { chatErrorMessage } from '../utils/errors'
+import { chatErrorMessage, chatReadinessMessage } from '../utils/errors'
 import { Send, FileText, Search, ExternalLink, MessageSquare, RotateCcw, Paperclip, X } from 'lucide-react'
 import { askChat, askDirectChat, getDocumentPage, getChatModels } from '../services/api'
 import { hideCitationMarkers, sourceUrl } from '../utils/sources'
@@ -127,7 +127,7 @@ export default function ChatPage() {
             {mode === 'rag' && privateAccess && <label className="text-xs font-medium text-slate-600">Nguồn tài liệu<select className="input mt-1 sm:w-44" value={activeScope} disabled={loading} onChange={event => changeScope(event.target.value as ChatScope)}><option value="private">Nội bộ</option><option value="public">Công khai</option><option value="all">Tất cả tài liệu</option></select></label>}
           </div>
         </div>
-        {modelsUnavailable && <div role="alert" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">Tạm thời chưa thể trả lời. Vui lòng thử lại sau.<button className="ml-2 font-semibold underline disabled:opacity-50" disabled={checkingModels} onClick={() => void retryModels()}>{checkingModels ? 'Đang thử lại...' : 'Thử lại'}</button></div>}
+        {modelsUnavailable && <div role="alert" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{chatReadinessMessage(modelsError ? undefined : selectedModel?.reason, privateAccess)}<button className="ml-2 font-semibold underline disabled:opacity-50" disabled={checkingModels} onClick={() => void retryModels()}>{checkingModels ? 'Đang thử lại...' : 'Thử lại'}</button></div>}
         {historyTrimmed && <p role="status" className="mt-2 text-xs text-amber-700">Với cuộc trò chuyện dài, bạn nên nhắc lại các chi tiết quan trọng.</p>}
       </header>
       <div data-testid="chat-scroll" ref={scroller} className="min-h-0 flex-1 space-y-5 overflow-auto overscroll-contain p-5">

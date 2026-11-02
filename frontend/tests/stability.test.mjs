@@ -13,7 +13,7 @@ async function moduleFrom(path) {
 }
 const { parseReaderLocation, readerRequest } = await moduleFrom('../src/utils/reader.ts')
 const { uploadRequestId } = await moduleFrom('../src/utils/uploadId.ts')
-const { errorMessage, chatErrorMessage, retryRead } = await moduleFrom('../src/utils/errors.ts')
+const { errorMessage, chatErrorMessage, chatReadinessMessage, retryRead } = await moduleFrom('../src/utils/errors.ts')
 const axios = require('axios')
 
 test('reader rejects invalid scopes, unsafe indices and incomplete fingerprints', () => {
@@ -120,4 +120,23 @@ test('chat rate limits show a bounded wait without leaking provider messages', (
   assert.doesNotMatch(chatErrorMessage(error),/OpenAI|secret|rate_limit/)
   error.response.headers['retry-after'] = '999999'
   assert.doesNotMatch(chatErrorMessage(error),/999999/)
+})
+
+test('readiness distinguishes missing key and retrieval dependencies without exposing setup details to guests', () => {
+  assert.match(chatReadinessMessage('api_key_missing'), /chưa được bật/)
+  assert.match(chatReadinessMessage('embedding_missing'), /tìm kiếm tài liệu/)
+  assert.match(chatReadinessMessage('ollama_unavailable'), /chưa kết nối/)
+  for (const reason of ['api_key_missing','embedding_missing','ollama_unavailable','model_missing']) {
+    assert.doesNotMatch(chatReadinessMessage(reason), /OPENAI_API_KEY|EMBEDDING_MODEL|OLLAMA_BASE_URL|Ollama|\.env/)
+  }
+  assert.match(chatReadinessMessage('api_key_missing',true), /OPENAI_API_KEY.*\.env/)
+  assert.match(chatReadinessMessage('embedding_missing',true), /EMBEDDING_MODEL/)
+})
+
+test('unknown readiness reasons cannot render arbitrary secrets or inherit object properties', () => {
+  const fallback='Tạm thời chưa thể trả lời. Vui lòng thử lại sau.'
+  for (const reason of [undefined,'SECRET_API_KEY=do-not-display','__proto__','constructor']) {
+    assert.equal(chatReadinessMessage(reason),fallback)
+    assert.equal(chatReadinessMessage(reason,true),fallback)
+  }
 })
